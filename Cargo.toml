@@ -1,0 +1,41 @@
+[package]
+name = "nirimap"
+version = "0.1.0"
+edition = "2024"
+description = "A minimap overlay for the Niri Wayland compositor"
+license = "MIT"
+repository = "https://github.com/alex/nirimap"
+
+[dependencies]
+# Niri IPC
+niri-ipc = "25"
+
+# GTK4 and Layer Shell
+gtk4 = "0.9"
+gtk4-layer-shell = "0.4"
+
+# Async runtime for IPC
+tokio = { version = "1", features = ["rt", "net", "sync", "io-util"] }
+
+# Configuration
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# XDG paths
+dirs = "5"
+
+# File watching for hot reload
+notify = "7"
+
+[profile.release]
+lto = true
+strip = true
