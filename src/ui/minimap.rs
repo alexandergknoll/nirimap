@@ -238,7 +238,7 @@ impl MinimapWidget {
     }
 }
 
-/// Calculate total workspace dimensions from windows
+/// Calculate total workspace dimensions from windows (excluding floating windows)
 fn calculate_workspace_dimensions(state: &MinimapState) -> (f64, f64) {
     let Some(workspace) = state.active_workspace() else {
         return (0.0, 0.0);
@@ -248,10 +248,16 @@ fn calculate_workspace_dimensions(state: &MinimapState) -> (f64, f64) {
         return (0.0, 0.0);
     }
 
-    // Group windows by column
+    // Group windows by column, excluding floating windows
     let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> = std::collections::BTreeMap::new();
     for window in workspace.windows.values() {
-        columns.entry(window.column_index).or_default().push(window);
+        if !window.is_floating {
+            columns.entry(window.column_index).or_default().push(window);
+        }
+    }
+
+    if columns.is_empty() {
+        return (0.0, 0.0);
     }
 
     // Calculate dimensions
@@ -304,9 +310,21 @@ fn draw_minimap(
         return;
     }
 
-    // Group windows by column and sort by window_index within each column
-    let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> = std::collections::BTreeMap::new();
+    // Separate tiled and floating windows
+    let mut tiled_windows: Vec<&Window> = Vec::new();
+    let mut floating_windows: Vec<&Window> = Vec::new();
+
     for window in workspace.windows.values() {
+        if window.is_floating {
+            floating_windows.push(window);
+        } else {
+            tiled_windows.push(window);
+        }
+    }
+
+    // Group tiled windows by column and sort by window_index within each column
+    let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> = std::collections::BTreeMap::new();
+    for window in tiled_windows {
         columns.entry(window.column_index).or_default().push(window);
     }
 
@@ -414,6 +432,62 @@ fn draw_minimap(
                 rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
                 cr.stroke().ok();
             }
+        }
+    }
+
+    // Draw floating windows as overlays
+    // Calculate viewport offset from tiled windows
+    let viewport_offset = if !columns.is_empty() {
+        // Find the minimum x position among tiled windows
+        workspace.windows.values()
+            .filter(|w| !w.is_floating)
+            .map(|w| w.pos.0)
+            .fold(f64::INFINITY, f64::min)
+    } else {
+        0.0
+    };
+
+    for window in floating_windows {
+        // Floating windows use workspace view coordinates
+        // Adjust for viewport offset to get screen-relative position
+        let screen_x = window.pos.0 - viewport_offset;
+        let screen_y = window.pos.1;
+
+        // Transform to minimap coordinates
+        let x = offset_x + screen_x * scale;
+        let y = offset_y + screen_y * scale;
+        let w = window.size.0 * scale;
+        let h = window.size.1 * scale;
+
+        // Apply gap
+        let x = x + half_gap;
+        let y = y + half_gap;
+        let w = (w - gap).max(1.0);
+        let h = (h - gap).max(1.0);
+
+        // Skip windows that are too small to render
+        if w < 1.0 || h < 1.0 {
+            continue;
+        }
+
+        // Choose fill color based on focus state
+        let fill_color = if window.is_focused {
+            &focused_color
+        } else {
+            &window_color
+        };
+
+        // Draw the window rectangle fill
+        cr.set_source_rgba(fill_color.r, fill_color.g, fill_color.b, fill_color.a);
+        rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
+        cr.fill().ok();
+
+        // Draw border
+        if appearance.border_width > 0.0 {
+            cr.set_source_rgba(border_color.r, border_color.g, border_color.b, border_color.a);
+            cr.set_line_width(appearance.border_width);
+            rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
+            cr.stroke().ok();
         }
     }
 }
