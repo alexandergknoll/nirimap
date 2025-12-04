@@ -211,3 +211,127 @@ impl Color {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_values() {
+        let config = Config::default();
+
+        // Test display defaults
+        assert_eq!(config.display.height, 100);
+        assert_eq!(config.display.max_width_percent, 0.5);
+        assert_eq!(config.display.anchor, Anchor::TopRight);
+        assert_eq!(config.display.margin_x, 10);
+        assert_eq!(config.display.margin_y, 10);
+
+        // Test appearance defaults
+        assert_eq!(config.appearance.background, "#1e1e2e");
+        assert_eq!(config.appearance.window_color, "#45475a");
+        assert_eq!(config.appearance.focused_color, "#89b4fa");
+        assert_eq!(config.appearance.border_color, "#6c7086");
+        assert_eq!(config.appearance.border_width, 1.0);
+        assert_eq!(config.appearance.border_radius, 2.0);
+        assert_eq!(config.appearance.gap, 2.0);
+        assert_eq!(config.appearance.background_opacity, 0.9);
+
+        // Test behavior defaults
+        assert_eq!(config.behavior.show_on_overview, true);
+        assert_eq!(config.behavior.always_visible, true);
+        assert_eq!(config.behavior.hide_timeout_ms, 2000);
+    }
+
+    #[test]
+    fn test_anchor_deserialization() {
+        // Test that anchor positions are correctly deserialized from TOML
+        let toml = r#"
+            [display]
+            anchor = "top-left"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.display.anchor, Anchor::TopLeft);
+
+        let toml = r#"
+            [display]
+            anchor = "bottom-center"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.display.anchor, Anchor::BottomCenter);
+    }
+
+    #[test]
+    fn test_partial_config_override() {
+        // Test that partial config can be deserialized (uses defaults for missing fields)
+        let toml = r#"
+            [display]
+            height = 150
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.display.height, 150);
+        // Other fields should use defaults
+        assert_eq!(config.display.max_width_percent, 0.5);
+        assert_eq!(config.appearance.background, "#1e1e2e");
+    }
+
+    #[test]
+    fn test_color_from_hex_with_hash() {
+        let color = Color::from_hex("#1e1e2e").unwrap();
+        assert!((color.r - 30.0 / 255.0).abs() < 0.001);
+        assert!((color.g - 30.0 / 255.0).abs() < 0.001);
+        assert!((color.b - 46.0 / 255.0).abs() < 0.001);
+        assert_eq!(color.a, 1.0);
+    }
+
+    #[test]
+    fn test_color_from_hex_without_hash() {
+        let color = Color::from_hex("89b4fa").unwrap();
+        assert!((color.r - 137.0 / 255.0).abs() < 0.001);
+        assert!((color.g - 180.0 / 255.0).abs() < 0.001);
+        assert!((color.b - 250.0 / 255.0).abs() < 0.001);
+        assert_eq!(color.a, 1.0);
+    }
+
+    #[test]
+    fn test_color_from_hex_invalid_length() {
+        // Too short
+        assert!(Color::from_hex("#fff").is_none());
+        // Too long
+        assert!(Color::from_hex("#1e1e2e00").is_none());
+        // Empty
+        assert!(Color::from_hex("").is_none());
+    }
+
+    #[test]
+    fn test_color_from_hex_invalid_characters() {
+        assert!(Color::from_hex("#gggggg").is_none());
+        assert!(Color::from_hex("#1e1e2z").is_none());
+        assert!(Color::from_hex("xyz123").is_none());
+    }
+
+    #[test]
+    fn test_color_from_hex_edge_cases() {
+        // Black
+        let black = Color::from_hex("#000000").unwrap();
+        assert_eq!(black.r, 0.0);
+        assert_eq!(black.g, 0.0);
+        assert_eq!(black.b, 0.0);
+
+        // White
+        let white = Color::from_hex("#ffffff").unwrap();
+        assert_eq!(white.r, 1.0);
+        assert_eq!(white.g, 1.0);
+        assert_eq!(white.b, 1.0);
+    }
+
+    #[test]
+    fn test_color_alpha_is_always_one() {
+        // Verify that alpha is always 1.0 regardless of input
+        let color1 = Color::from_hex("#123456").unwrap();
+        assert_eq!(color1.a, 1.0);
+
+        let color2 = Color::from_hex("abcdef").unwrap();
+        assert_eq!(color2.a, 1.0);
+    }
+}
