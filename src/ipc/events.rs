@@ -152,6 +152,9 @@ fn event_to_update(event: Event) -> Option<StateUpdate> {
 fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
     let layout = &win.layout;
 
+    // Floating windows have pos_in_scrolling_layout = None
+    let is_floating = layout.pos_in_scrolling_layout.is_none();
+
     // Extract position in scrolling layout (column, window_in_column)
     let (column_index, window_index) = layout
         .pos_in_scrolling_layout
@@ -170,5 +173,6 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
         column_index,
         window_index,
         is_focused: win.is_focused,
+        is_floating,
     }
 }

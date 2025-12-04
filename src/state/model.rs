@@ -19,6 +19,8 @@ pub struct Window {
     pub window_index: usize,
     /// Whether this window is currently focused
     pub is_focused: bool,
+    /// Whether this window is floating (not tiled)
+    pub is_floating: bool,
 }
 
 /// Represents a workspace containing windows

@@ -247,6 +247,8 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                         if let Some(window) = workspace.windows.get_mut(&window_id) {
                             window.pos = layout.tile_pos_in_workspace_view.unwrap_or(window.pos);
                             window.size = layout.tile_size;
+                            // Update floating status
+                            window.is_floating = layout.pos_in_scrolling_layout.is_none();
                             if let Some((col, win_idx)) = layout.pos_in_scrolling_layout {
                                 window.column_index = col.saturating_sub(1);
                                 window.window_index = win_idx.saturating_sub(1);

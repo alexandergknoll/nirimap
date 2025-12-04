@@ -238,7 +238,7 @@ impl MinimapWidget {
     }
 }
 
-/// Calculate total workspace dimensions from windows
+/// Calculate total workspace dimensions from windows (excluding floating windows)
 fn calculate_workspace_dimensions(state: &MinimapState) -> (f64, f64) {
     let Some(workspace) = state.active_workspace() else {
         return (0.0, 0.0);
@@ -248,10 +248,16 @@ fn calculate_workspace_dimensions(state: &MinimapState) -> (f64, f64) {
         return (0.0, 0.0);
     }
 
-    // Group windows by column
+    // Group windows by column, excluding floating windows
     let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> = std::collections::BTreeMap::new();
     for window in workspace.windows.values() {
-        columns.entry(window.column_index).or_default().push(window);
+        if !window.is_floating {
+            columns.entry(window.column_index).or_default().push(window);
+        }
+    }
+
+    if columns.is_empty() {
+        return (0.0, 0.0);
     }
 
     // Calculate dimensions
@@ -304,9 +310,22 @@ fn draw_minimap(
         return;
     }
 
-    // Group windows by column and sort by window_index within each column
-    let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> = std::collections::BTreeMap::new();
+    // Separate tiled and floating windows
+    // Note: floating_windows is not currently implemented for minimap, see comments below.
+    let mut tiled_windows: Vec<&Window> = Vec::new();
+    let mut floating_windows: Vec<&Window> = Vec::new();
+
     for window in workspace.windows.values() {
+        if window.is_floating {
+            floating_windows.push(window);
+        } else {
+            tiled_windows.push(window);
+        }
+    }
+
+    // Group tiled windows by column and sort by window_index within each column
+    let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> = std::collections::BTreeMap::new();
+    for window in tiled_windows {
         columns.entry(window.column_index).or_default().push(window);
     }
 
@@ -416,6 +435,103 @@ fn draw_minimap(
             }
         }
     }
+
+    // ==================================================================================
+    // FLOATING WINDOW RENDERING - CURRENTLY DISABLED
+    // ==================================================================================
+    // Floating windows are not rendered due to viewport offset tracking limitations.
+    // See GitHub Issue #6 for details: https://github.com/alexandergknoll/nirimap/issues/6
+    //
+    // The code below implements partial floating window support that works when:
+    // - A tiled window has focus (can estimate viewport offset from focused column)
+    // - Using left-align behavior (center-focused-column "never" in Niri config)
+    //
+    // Known issues that prevent enabling this:
+    // 1. When a floating window has focus, viewport offset cannot be determined
+    // 2. Viewport can scroll without focus changes (center-column, vertical stacking)
+    // 3. Assumes specific Niri configuration (center-focused-column "never")
+    //
+    // This code is preserved for future use when Niri's IPC exposes viewport position.
+    // ==================================================================================
+
+    /* DISABLED - Floating window rendering
+
+    // Estimate viewport offset based on focused column (assumes left-align behavior)
+    let viewport_offset = if !columns.is_empty() {
+        // Find which column is focused (tiled windows only)
+        let focused_col = workspace.windows.values()
+            .find(|w| w.is_focused && !w.is_floating)
+            .map(|w| w.column_index);
+
+        if let Some(focused_col_idx) = focused_col {
+            // With left-align (center-focused-column "never"), the focused column
+            // is positioned at the left edge of the viewport
+            // So viewport_offset = x position of the focused column
+            let offset = column_x_positions.get(focused_col_idx).copied().unwrap_or(0.0);
+
+            tracing::debug!("Focused column: {}, Viewport offset (left-align): {}", focused_col_idx, offset);
+
+            offset
+        } else {
+            // No tiled window focused (floating window is focused)
+            // We can't determine viewport offset, so assume it hasn't changed
+            // This is a limitation - we'd need to track the last known offset
+            tracing::debug!("No tiled window focused (floating focused), using offset: 0");
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    for window in floating_windows {
+        // Floating windows in Niri are already viewport-relative (like tiled windows)
+        // Their position is screen-relative, so we need to ADD the viewport offset
+        // to convert to workspace coordinates for rendering on the minimap
+        let workspace_x = window.pos.0 + viewport_offset;
+        let workspace_y = window.pos.1;
+
+        tracing::debug!("Drawing floating window {}: viewport_pos=({}, {}), viewport_offset={}, workspace_pos=({}, {})",
+            window.id, window.pos.0, window.pos.1, viewport_offset, workspace_x, workspace_y);
+
+        // Transform to minimap coordinates
+        let x = offset_x + workspace_x * scale;
+        let y = offset_y + workspace_y * scale;
+        let w = window.size.0 * scale;
+        let h = window.size.1 * scale;
+
+        // Apply gap
+        let x = x + half_gap;
+        let y = y + half_gap;
+        let w = (w - gap).max(1.0);
+        let h = (h - gap).max(1.0);
+
+        // Skip windows that are too small to render
+        if w < 1.0 || h < 1.0 {
+            continue;
+        }
+
+        // Choose fill color based on focus state
+        let fill_color = if window.is_focused {
+            &focused_color
+        } else {
+            &window_color
+        };
+
+        // Draw the window rectangle fill
+        cr.set_source_rgba(fill_color.r, fill_color.g, fill_color.b, fill_color.a);
+        rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
+        cr.fill().ok();
+
+        // Draw border
+        if appearance.border_width > 0.0 {
+            cr.set_source_rgba(border_color.r, border_color.g, border_color.b, border_color.a);
+            cr.set_line_width(appearance.border_width);
+            rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
+            cr.stroke().ok();
+        }
+    }
+
+    */ // END DISABLED floating window rendering
 }
 
 /// Draw a rounded rectangle path
