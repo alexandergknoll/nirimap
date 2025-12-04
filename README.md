@@ -37,6 +37,9 @@ sudo apt install libgtk-4-dev libgtk4-layer-shell-dev
 
 # Build and install
 cargo install --path .
+
+# Build for release
+cargo build --release
 ```
 
 ## Usage
