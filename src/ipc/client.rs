@@ -38,15 +38,6 @@ impl NiriClient {
         }
     }
 
-    /// Query the focused window
-    pub fn get_focused_window(&mut self) -> Result<Option<niri_ipc::Window>> {
-        let reply = self.send(Request::FocusedWindow)?;
-        match reply {
-            Response::FocusedWindow(window) => Ok(window),
-            other => anyhow::bail!("Unexpected response for FocusedWindow request: {:?}", other),
-        }
-    }
-
     /// Send a request and get a response
     fn send(&mut self, request: Request) -> Result<Response> {
         let reply: Reply = self

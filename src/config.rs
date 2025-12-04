@@ -210,10 +210,4 @@ impl Color {
             a: 1.0,
         })
     }
-
-    /// Create a color with modified alpha
-    pub fn with_alpha(mut self, alpha: f64) -> Self {
-        self.a = alpha;
-        self
-    }
 }
