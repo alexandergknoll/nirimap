@@ -94,10 +94,39 @@ fn fetch_initial_state() -> Result<MinimapState> {
     Ok(state)
 }
 
+/// Validate the socket path for security
+pub(super) fn validate_socket_path(socket_path: &str) -> Result<()> {
+    use std::path::Path;
+
+    let path = Path::new(socket_path);
+
+    // Ensure the path is absolute (prevents relative path attacks)
+    if !path.is_absolute() {
+        anyhow::bail!("NIRI_SOCKET must be an absolute path, got: {}", socket_path);
+    }
+
+    // Check if the path is in expected locations for security
+    // Typically: /run/user/<uid>/ or /tmp/
+    let path_str = socket_path;
+    let is_expected_location = path_str.starts_with("/run/user/") || path_str.starts_with("/tmp/");
+
+    if !is_expected_location {
+        tracing::warn!(
+            "NIRI_SOCKET is in an unexpected location: {}. Expected /run/user/<uid>/ or /tmp/",
+            socket_path
+        );
+    }
+
+    Ok(())
+}
+
 /// Connect to the event stream
 fn connect_event_stream() -> Result<BufReader<UnixStream>> {
     let socket_path = std::env::var("NIRI_SOCKET")
         .context("NIRI_SOCKET environment variable not set. Is Niri running?")?;
+
+    // Validate the socket path for security
+    validate_socket_path(&socket_path)?;
 
     let stream = UnixStream::connect(&socket_path)
         .with_context(|| format!("Failed to connect to Niri socket at {}", socket_path))?;
@@ -126,6 +155,21 @@ fn connect_event_stream() -> Result<BufReader<UnixStream>> {
     tracing::debug!("Connected to event stream");
 
     Ok(reader)
+}
+
+/// Validate and convert 1-based indices from Niri to 0-based indices
+/// Returns (column_index, window_index) as 0-based values
+pub fn validate_and_convert_indices(col: usize, win_idx: usize, window_id: u64) -> (usize, usize) {
+    // Validate indices are >= 1 (Niri uses 1-based indexing)
+    if col == 0 {
+        tracing::warn!("Invalid column index 0 received from Niri for window {}", window_id);
+    }
+    if win_idx == 0 {
+        tracing::warn!("Invalid window index 0 received from Niri for window {}", window_id);
+    }
+
+    // Convert from 1-based to 0-based, saturating at 0 for invalid inputs
+    (col.saturating_sub(1), win_idx.saturating_sub(1))
 }
 
 /// Convert a Niri event to a state update
@@ -158,7 +202,7 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
     // Extract position in scrolling layout (column, window_in_column)
     let (column_index, window_index) = layout
         .pos_in_scrolling_layout
-        .map(|(c, w)| (c.saturating_sub(1), w.saturating_sub(1))) // Convert from 1-based to 0-based
+        .map(|(c, w)| validate_and_convert_indices(c, w, win.id))
         .unwrap_or((0, 0));
 
     // Extract position in workspace view

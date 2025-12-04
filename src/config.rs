@@ -136,7 +136,7 @@ impl Config {
     /// Get the configuration file path
     pub fn config_path() -> PathBuf {
         dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+            .expect("Failed to determine config directory. Please set XDG_CONFIG_HOME or HOME environment variable.")
             .join("nirimap")
             .join("config.toml")
     }
