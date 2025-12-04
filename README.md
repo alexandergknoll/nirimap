@@ -108,6 +108,16 @@ When `always_visible = false`, the minimap will show temporarily when:
 
 The minimap hides automatically after `hide_timeout_ms` milliseconds.
 
+## Known Limitations
+
+### Floating Windows
+
+Floating windows are currently not displayed on the minimap. This is due to a limitation in Niri's IPC API, which doesn't expose viewport scroll position information needed to accurately calculate floating window positions on the minimap.
+
+**Technical Details**: Both tiled and floating windows report viewport-relative coordinates, but the viewport offset cannot be reliably determined from the available IPC data. While we can estimate the viewport offset based on the focused column, this breaks when floating windows have focus or when the viewport scrolls without focus changes (e.g., "center column" operations).
+
+See [Issue #6](https://github.com/alexandergknoll/nirimap/issues/6) for more details and potential future solutions.
+
 ## Dependencies
 
 - [niri-ipc](https://crates.io/crates/niri-ipc) - Niri IPC protocol
