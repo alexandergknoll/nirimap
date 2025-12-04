@@ -20,6 +20,10 @@ use ui::{create_layer_window, MinimapWidget};
 
 const APP_ID: &str = "com.github.nirimap";
 
+/// Debounce duration for config reloads in milliseconds
+/// Prevents excessive reloads when config file is modified multiple times rapidly
+const CONFIG_RELOAD_DEBOUNCE_MS: u64 = 500;
+
 /// Messages for config reload
 enum ConfigMessage {
     Reload,
@@ -103,7 +107,7 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
     // Set up glib idle handler to process state updates and config reloads
     let minimap_clone = minimap.clone();
     let last_config_reload = Rc::new(RefCell::new(Instant::now()));
-    let config_reload_debounce = Duration::from_millis(500);
+    let config_reload_debounce = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
 
     glib::idle_add_local(move || {
         // Process all pending state updates
