@@ -261,15 +261,10 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                             window.pos = layout.tile_pos_in_workspace_view.unwrap_or(window.pos);
                             window.size = layout.tile_size;
                             if let Some((col, win_idx)) = layout.pos_in_scrolling_layout {
-                                // Validate indices are >= 1 before converting from 1-based to 0-based
-                                if col == 0 {
-                                    tracing::warn!("Invalid column index 0 received from Niri for window {}", window_id);
-                                }
-                                if win_idx == 0 {
-                                    tracing::warn!("Invalid window index 0 received from Niri for window {}", window_id);
-                                }
-                                window.column_index = col.saturating_sub(1);
-                                window.window_index = win_idx.saturating_sub(1);
+                                let (column_index, window_index) =
+                                    ipc::validate_and_convert_indices(col, win_idx, window_id);
+                                window.column_index = column_index;
+                                window.window_index = window_index;
                             }
                         }
                     }

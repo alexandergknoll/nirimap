@@ -95,7 +95,7 @@ fn fetch_initial_state() -> Result<MinimapState> {
 }
 
 /// Validate the socket path for security
-fn validate_socket_path(socket_path: &str) -> Result<()> {
+pub(super) fn validate_socket_path(socket_path: &str) -> Result<()> {
     use std::path::Path;
 
     let path = Path::new(socket_path);
@@ -157,6 +157,21 @@ fn connect_event_stream() -> Result<BufReader<UnixStream>> {
     Ok(reader)
 }
 
+/// Validate and convert 1-based indices from Niri to 0-based indices
+/// Returns (column_index, window_index) as 0-based values
+pub fn validate_and_convert_indices(col: usize, win_idx: usize, window_id: u64) -> (usize, usize) {
+    // Validate indices are >= 1 (Niri uses 1-based indexing)
+    if col == 0 {
+        tracing::warn!("Invalid column index 0 received from Niri for window {}", window_id);
+    }
+    if win_idx == 0 {
+        tracing::warn!("Invalid window index 0 received from Niri for window {}", window_id);
+    }
+
+    // Convert from 1-based to 0-based, saturating at 0 for invalid inputs
+    (col.saturating_sub(1), win_idx.saturating_sub(1))
+}
+
 /// Convert a Niri event to a state update
 fn event_to_update(event: Event) -> Option<StateUpdate> {
     match event {
@@ -184,16 +199,7 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
     // Extract position in scrolling layout (column, window_in_column)
     let (column_index, window_index) = layout
         .pos_in_scrolling_layout
-        .map(|(c, w)| {
-            // Validate indices are >= 1 before converting from 1-based to 0-based
-            if c == 0 {
-                tracing::warn!("Invalid column index 0 received from Niri for window {}", win.id);
-            }
-            if w == 0 {
-                tracing::warn!("Invalid window index 0 received from Niri for window {}", win.id);
-            }
-            (c.saturating_sub(1), w.saturating_sub(1))
-        })
+        .map(|(c, w)| validate_and_convert_indices(c, w, win.id))
         .unwrap_or((0, 0));
 
     // Extract position in workspace view
