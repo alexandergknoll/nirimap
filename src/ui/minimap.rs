@@ -311,6 +311,7 @@ fn draw_minimap(
     }
 
     // Separate tiled and floating windows
+    // Note: floating_windows is not currently implemented for minimap, see comments below.
     let mut tiled_windows: Vec<&Window> = Vec::new();
     let mut floating_windows: Vec<&Window> = Vec::new();
 
@@ -524,7 +525,7 @@ fn draw_minimap(
         // Draw border
         if appearance.border_width > 0.0 {
             cr.set_source_rgba(border_color.r, border_color.g, border_color.b, border_color.a);
-            cr.set_line_width(appearance.border_radius);
+            cr.set_line_width(appearance.border_width);
             rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
             cr.stroke().ok();
         }
