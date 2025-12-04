@@ -220,3 +220,80 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
         is_floating,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_socket_path_absolute_path() {
+        // Valid absolute paths
+        assert!(validate_socket_path("/run/user/1000/niri.sock").is_ok());
+        assert!(validate_socket_path("/tmp/niri.sock").is_ok());
+    }
+
+    #[test]
+    fn test_validate_socket_path_relative_path() {
+        // Relative paths should be rejected
+        assert!(validate_socket_path("relative/path/niri.sock").is_err());
+        assert!(validate_socket_path("./niri.sock").is_err());
+        assert!(validate_socket_path("../niri.sock").is_err());
+    }
+
+    #[test]
+    fn test_validate_socket_path_unexpected_location() {
+        // Should warn but succeed for unexpected locations
+        let result = validate_socket_path("/home/user/niri.sock");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_socket_path_empty() {
+        // Empty path should fail
+        assert!(validate_socket_path("").is_err());
+    }
+
+    #[test]
+    fn test_validate_and_convert_indices_normal_case() {
+        // Normal 1-based to 0-based conversion
+        let (col, win) = validate_and_convert_indices(1, 1, 123);
+        assert_eq!(col, 0);
+        assert_eq!(win, 0);
+
+        let (col, win) = validate_and_convert_indices(5, 3, 123);
+        assert_eq!(col, 4);
+        assert_eq!(win, 2);
+    }
+
+    #[test]
+    fn test_validate_and_convert_indices_zero() {
+        // Edge case: 0 should be treated as invalid and saturate to 0
+        let (col, win) = validate_and_convert_indices(0, 0, 123);
+        assert_eq!(col, 0);
+        assert_eq!(win, 0);
+
+        let (col, win) = validate_and_convert_indices(0, 1, 123);
+        assert_eq!(col, 0);
+        assert_eq!(win, 0);
+
+        let (col, win) = validate_and_convert_indices(1, 0, 123);
+        assert_eq!(col, 0);
+        assert_eq!(win, 0);
+    }
+
+    #[test]
+    fn test_validate_and_convert_indices_max_value() {
+        // Edge case: usize::MAX should saturate correctly
+        let (col, win) = validate_and_convert_indices(usize::MAX, usize::MAX, 123);
+        assert_eq!(col, usize::MAX - 1);
+        assert_eq!(win, usize::MAX - 1);
+    }
+
+    #[test]
+    fn test_validate_and_convert_indices_large_values() {
+        // Test large but reasonable values
+        let (col, win) = validate_and_convert_indices(1000, 500, 123);
+        assert_eq!(col, 999);
+        assert_eq!(win, 499);
+    }
+}

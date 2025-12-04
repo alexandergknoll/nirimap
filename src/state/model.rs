@@ -172,3 +172,285 @@ impl MinimapState {
         self.focused_window_id = None;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_window(id: u64, x: f64, y: f64, width: f64, height: f64) -> Window {
+        Window {
+            id,
+            app_id: format!("app_{}", id),
+            title: format!("Window {}", id),
+            pos: (x, y),
+            size: (width, height),
+            column_index: 0,
+            window_index: 0,
+            is_focused: false,
+            is_floating: false,
+        }
+    }
+
+    // Workspace tests
+    #[test]
+    fn test_workspace_total_width_empty() {
+        let workspace = Workspace::default();
+        assert_eq!(workspace.total_width(), 0.0);
+    }
+
+    #[test]
+    fn test_workspace_total_width_single_window() {
+        let mut workspace = Workspace::default();
+        let window = create_test_window(1, 0.0, 0.0, 100.0, 200.0);
+        workspace.windows.insert(1, window);
+
+        assert_eq!(workspace.total_width(), 100.0);
+    }
+
+    #[test]
+    fn test_workspace_total_width_multiple_windows() {
+        let mut workspace = Workspace::default();
+        workspace.windows.insert(1, create_test_window(1, 0.0, 0.0, 100.0, 200.0));
+        workspace.windows.insert(2, create_test_window(2, 100.0, 0.0, 150.0, 200.0));
+        workspace.windows.insert(3, create_test_window(3, 250.0, 0.0, 50.0, 200.0));
+
+        // Right edge of window 3: 250 + 50 = 300
+        assert_eq!(workspace.total_width(), 300.0);
+    }
+
+    #[test]
+    fn test_workspace_total_height_empty() {
+        let workspace = Workspace::default();
+        assert_eq!(workspace.total_height(), 0.0);
+    }
+
+    #[test]
+    fn test_workspace_total_height_single_window() {
+        let mut workspace = Workspace::default();
+        let window = create_test_window(1, 0.0, 0.0, 100.0, 200.0);
+        workspace.windows.insert(1, window);
+
+        assert_eq!(workspace.total_height(), 200.0);
+    }
+
+    #[test]
+    fn test_workspace_total_height_stacked_windows() {
+        let mut workspace = Workspace::default();
+        workspace.windows.insert(1, create_test_window(1, 0.0, 0.0, 100.0, 100.0));
+        workspace.windows.insert(2, create_test_window(2, 0.0, 100.0, 100.0, 150.0));
+        workspace.windows.insert(3, create_test_window(3, 0.0, 250.0, 100.0, 75.0));
+
+        // Bottom edge of window 3: 250 + 75 = 325
+        assert_eq!(workspace.total_height(), 325.0);
+    }
+
+    #[test]
+    fn test_workspace_min_x_empty() {
+        let workspace = Workspace::default();
+        assert_eq!(workspace.min_x(), f64::INFINITY);
+    }
+
+    #[test]
+    fn test_workspace_min_x_single_window() {
+        let mut workspace = Workspace::default();
+        let window = create_test_window(1, 50.0, 0.0, 100.0, 200.0);
+        workspace.windows.insert(1, window);
+
+        assert_eq!(workspace.min_x(), 50.0);
+    }
+
+    #[test]
+    fn test_workspace_min_x_multiple_windows() {
+        let mut workspace = Workspace::default();
+        workspace.windows.insert(1, create_test_window(1, 100.0, 0.0, 100.0, 200.0));
+        workspace.windows.insert(2, create_test_window(2, 50.0, 0.0, 150.0, 200.0));
+        workspace.windows.insert(3, create_test_window(3, 200.0, 0.0, 50.0, 200.0));
+
+        assert_eq!(workspace.min_x(), 50.0);
+    }
+
+    #[test]
+    fn test_workspace_min_x_negative_coordinates() {
+        let mut workspace = Workspace::default();
+        workspace.windows.insert(1, create_test_window(1, -50.0, 0.0, 100.0, 200.0));
+        workspace.windows.insert(2, create_test_window(2, 0.0, 0.0, 150.0, 200.0));
+
+        assert_eq!(workspace.min_x(), -50.0);
+    }
+
+    // MinimapState tests
+    #[test]
+    fn test_minimap_state_new() {
+        let state = MinimapState::new();
+        assert!(state.workspaces.is_empty());
+        assert_eq!(state.active_workspace_id, None);
+        assert_eq!(state.focused_window_id, None);
+        assert_eq!(state.output_name, None);
+    }
+
+    #[test]
+    fn test_minimap_state_active_workspace() {
+        let mut state = MinimapState::new();
+
+        // No active workspace initially
+        assert!(state.active_workspace().is_none());
+
+        // Add a workspace
+        let workspace = Workspace {
+            id: 1,
+            is_active: true,
+            ..Default::default()
+        };
+        state.workspaces.insert(1, workspace);
+        state.active_workspace_id = Some(1);
+
+        // Now we should get the workspace
+        let active = state.active_workspace().unwrap();
+        assert_eq!(active.id, 1);
+        assert!(active.is_active);
+    }
+
+    #[test]
+    fn test_minimap_state_upsert_window_new() {
+        let mut state = MinimapState::new();
+        let window = create_test_window(1, 0.0, 0.0, 100.0, 200.0);
+
+        state.upsert_window(1, window);
+
+        // Workspace should be created
+        assert!(state.workspaces.contains_key(&1));
+        let workspace = state.workspaces.get(&1).unwrap();
+        assert_eq!(workspace.id, 1);
+        assert!(workspace.windows.contains_key(&1));
+    }
+
+    #[test]
+    fn test_minimap_state_upsert_window_update() {
+        let mut state = MinimapState::new();
+
+        // Add initial window
+        let window1 = create_test_window(1, 0.0, 0.0, 100.0, 200.0);
+        state.upsert_window(1, window1);
+
+        // Update the same window
+        let mut window2 = create_test_window(1, 50.0, 50.0, 150.0, 250.0);
+        window2.title = "Updated Window".to_string();
+        state.upsert_window(1, window2);
+
+        // Should still have only one window, but updated
+        let workspace = state.workspaces.get(&1).unwrap();
+        assert_eq!(workspace.windows.len(), 1);
+        let window = workspace.windows.get(&1).unwrap();
+        assert_eq!(window.title, "Updated Window");
+        assert_eq!(window.pos, (50.0, 50.0));
+        assert_eq!(window.size, (150.0, 250.0));
+    }
+
+    #[test]
+    fn test_minimap_state_remove_window() {
+        let mut state = MinimapState::new();
+
+        // Add windows to multiple workspaces
+        state.upsert_window(1, create_test_window(1, 0.0, 0.0, 100.0, 200.0));
+        state.upsert_window(1, create_test_window(2, 100.0, 0.0, 100.0, 200.0));
+        state.upsert_window(2, create_test_window(3, 0.0, 0.0, 100.0, 200.0));
+
+        // Remove window 2
+        state.remove_window(2);
+
+        // Window 2 should be gone
+        let workspace1 = state.workspaces.get(&1).unwrap();
+        assert!(!workspace1.windows.contains_key(&2));
+        assert!(workspace1.windows.contains_key(&1));
+
+        // Other workspaces should be unaffected
+        let workspace2 = state.workspaces.get(&2).unwrap();
+        assert!(workspace2.windows.contains_key(&3));
+    }
+
+    #[test]
+    fn test_minimap_state_set_focused_window() {
+        let mut state = MinimapState::new();
+        state.upsert_window(1, create_test_window(1, 0.0, 0.0, 100.0, 200.0));
+        state.upsert_window(1, create_test_window(2, 100.0, 0.0, 100.0, 200.0));
+
+        // Focus window 1
+        state.set_focused_window(Some(1));
+        assert_eq!(state.focused_window_id, Some(1));
+
+        let workspace = state.workspaces.get(&1).unwrap();
+        assert!(workspace.windows.get(&1).unwrap().is_focused);
+        assert!(!workspace.windows.get(&2).unwrap().is_focused);
+
+        // Switch focus to window 2
+        state.set_focused_window(Some(2));
+        assert_eq!(state.focused_window_id, Some(2));
+
+        let workspace = state.workspaces.get(&1).unwrap();
+        assert!(!workspace.windows.get(&1).unwrap().is_focused);
+        assert!(workspace.windows.get(&2).unwrap().is_focused);
+    }
+
+    #[test]
+    fn test_minimap_state_set_focused_window_none() {
+        let mut state = MinimapState::new();
+        state.upsert_window(1, create_test_window(1, 0.0, 0.0, 100.0, 200.0));
+
+        // Focus window
+        state.set_focused_window(Some(1));
+        assert!(state.workspaces.get(&1).unwrap().windows.get(&1).unwrap().is_focused);
+
+        // Clear focus
+        state.set_focused_window(None);
+        assert_eq!(state.focused_window_id, None);
+        assert!(!state.workspaces.get(&1).unwrap().windows.get(&1).unwrap().is_focused);
+    }
+
+    #[test]
+    fn test_minimap_state_set_active_workspace() {
+        let mut state = MinimapState::new();
+        state.workspaces.insert(1, Workspace { id: 1, ..Default::default() });
+        state.workspaces.insert(2, Workspace { id: 2, ..Default::default() });
+
+        // Set workspace 1 as active
+        state.set_active_workspace(1);
+        assert_eq!(state.active_workspace_id, Some(1));
+        assert!(state.workspaces.get(&1).unwrap().is_active);
+        assert!(!state.workspaces.get(&2).unwrap().is_active);
+
+        // Switch to workspace 2
+        state.set_active_workspace(2);
+        assert_eq!(state.active_workspace_id, Some(2));
+        assert!(!state.workspaces.get(&1).unwrap().is_active);
+        assert!(state.workspaces.get(&2).unwrap().is_active);
+    }
+
+    #[test]
+    fn test_minimap_state_set_active_workspace_creates_if_missing() {
+        let mut state = MinimapState::new();
+
+        // Set non-existent workspace as active
+        state.set_active_workspace(99);
+
+        // Workspace should be created
+        assert!(state.workspaces.contains_key(&99));
+        assert_eq!(state.active_workspace_id, Some(99));
+        assert!(state.workspaces.get(&99).unwrap().is_active);
+    }
+
+    #[test]
+    fn test_minimap_state_clear() {
+        let mut state = MinimapState::new();
+        state.upsert_window(1, create_test_window(1, 0.0, 0.0, 100.0, 200.0));
+        state.set_active_workspace(1);
+        state.set_focused_window(Some(1));
+        state.output_name = Some("HDMI-1".to_string());
+
+        state.clear();
+
+        assert!(state.workspaces.is_empty());
+        assert_eq!(state.active_workspace_id, None);
+        assert_eq!(state.focused_window_id, None);
+        // Note: clear() doesn't reset output_name, which is intentional
+    }
+}

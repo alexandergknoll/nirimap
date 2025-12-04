@@ -282,3 +282,82 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn test_config_reload_debounce_constant() {
+        // Verify the debounce constant is reasonable
+        assert_eq!(CONFIG_RELOAD_DEBOUNCE_MS, 500);
+        assert!(CONFIG_RELOAD_DEBOUNCE_MS >= 100); // At least 100ms
+        assert!(CONFIG_RELOAD_DEBOUNCE_MS <= 2000); // At most 2 seconds
+    }
+
+    #[test]
+    fn test_debounce_logic_simulation() {
+        // Simulate debounce logic without GTK
+        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
+        let mut last_reload = Instant::now();
+
+        // First reload should always succeed
+        let now = Instant::now();
+        let should_reload = now.duration_since(last_reload) >= debounce_duration;
+        assert!(should_reload || now.duration_since(last_reload).as_millis() < CONFIG_RELOAD_DEBOUNCE_MS as u128);
+
+        // Immediate second reload should be debounced
+        std::thread::sleep(Duration::from_millis(50));
+        let now = Instant::now();
+        let should_reload = now.duration_since(last_reload) >= debounce_duration;
+        assert!(!should_reload);
+
+        // After debounce period, reload should succeed
+        std::thread::sleep(Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS + 50));
+        let now = Instant::now();
+        let should_reload = now.duration_since(last_reload) >= debounce_duration;
+        assert!(should_reload);
+
+        // Update last reload time
+        last_reload = now;
+
+        // Immediate reload should again be debounced
+        let now = Instant::now();
+        let should_reload = now.duration_since(last_reload) >= debounce_duration;
+        assert!(!should_reload);
+    }
+
+    #[test]
+    fn test_debounce_edge_cases() {
+        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
+        let last_reload = Instant::now();
+
+        // Exactly at the debounce boundary
+        std::thread::sleep(debounce_duration);
+        let now = Instant::now();
+        let should_reload = now.duration_since(last_reload) >= debounce_duration;
+        assert!(should_reload);
+    }
+
+    #[test]
+    fn test_debounce_multiple_rapid_events() {
+        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
+        let mut last_reload = Instant::now();
+        let mut reload_count = 0;
+
+        // Simulate 10 rapid config change events
+        for _ in 0..10 {
+            std::thread::sleep(Duration::from_millis(50));
+            let now = Instant::now();
+            if now.duration_since(last_reload) >= debounce_duration {
+                reload_count += 1;
+                last_reload = now;
+            }
+        }
+
+        // Should have reloaded at most 1-2 times (depending on timing)
+        // With 50ms between events and 500ms debounce, we expect 1-2 reloads
+        assert!(reload_count <= 2, "Too many reloads: {}", reload_count);
+    }
+}

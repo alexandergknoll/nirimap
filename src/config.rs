@@ -217,3 +217,145 @@ impl Color {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Config tests
+    #[test]
+    fn test_config_defaults() {
+        let config = Config::default();
+
+        // Display defaults
+        assert_eq!(config.display.height, 100);
+        assert_eq!(config.display.max_width_percent, 0.5);
+        assert_eq!(config.display.anchor, Anchor::TopRight);
+        assert_eq!(config.display.margin_x, 10);
+        assert_eq!(config.display.margin_y, 10);
+
+        // Appearance defaults
+        assert_eq!(config.appearance.background, "#1e1e2e");
+        assert_eq!(config.appearance.window_color, "#45475a");
+        assert_eq!(config.appearance.focused_color, "#89b4fa");
+        assert_eq!(config.appearance.border_color, "#6c7086");
+        assert_eq!(config.appearance.border_width, 1.0);
+        assert_eq!(config.appearance.border_radius, 2.0);
+        assert_eq!(config.appearance.gap, 2.0);
+        assert_eq!(config.appearance.background_opacity, 0.9);
+
+        // Behavior defaults
+        assert!(config.behavior.show_on_overview);
+        assert!(config.behavior.always_visible);
+        assert_eq!(config.behavior.hide_timeout_ms, 2000);
+    }
+
+    #[test]
+    fn test_anchor_deserialization() {
+        let toml = r#"
+            [display]
+            anchor = "top-left"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.display.anchor, Anchor::TopLeft);
+
+        let toml = r#"
+            [display]
+            anchor = "bottom-right"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.display.anchor, Anchor::BottomRight);
+
+        let toml = r#"
+            [display]
+            anchor = "center"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.display.anchor, Anchor::Center);
+    }
+
+    #[test]
+    fn test_config_partial_override() {
+        let toml = r#"
+            [display]
+            height = 200
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+
+        // Overridden value
+        assert_eq!(config.display.height, 200);
+
+        // Default values should still be present
+        assert_eq!(config.display.max_width_percent, 0.5);
+        assert_eq!(config.appearance.background, "#1e1e2e");
+    }
+
+    // Color parsing tests
+    #[test]
+    fn test_color_from_hex_valid() {
+        let color = Color::from_hex("#1e1e2e").unwrap();
+        assert!((color.r - 0.117647).abs() < 0.001); // 30/255
+        assert!((color.g - 0.117647).abs() < 0.001); // 30/255
+        assert!((color.b - 0.180392).abs() < 0.001); // 46/255
+        assert_eq!(color.a, 1.0);
+    }
+
+    #[test]
+    fn test_color_from_hex_without_hash() {
+        let color = Color::from_hex("89b4fa").unwrap();
+        assert!((color.r - 0.537255).abs() < 0.001); // 137/255
+        assert!((color.g - 0.705882).abs() < 0.001); // 180/255
+        assert!((color.b - 0.980392).abs() < 0.001); // 250/255
+        assert_eq!(color.a, 1.0);
+    }
+
+    #[test]
+    fn test_color_from_hex_invalid_length() {
+        assert!(Color::from_hex("#fff").is_none());
+        assert!(Color::from_hex("#1234567").is_none());
+        assert!(Color::from_hex("").is_none());
+    }
+
+    #[test]
+    fn test_color_from_hex_invalid_chars() {
+        assert!(Color::from_hex("#gggggg").is_none());
+        assert!(Color::from_hex("#xyz123").is_none());
+    }
+
+    #[test]
+    fn test_color_from_hex_edge_cases() {
+        // All black
+        let color = Color::from_hex("#000000").unwrap();
+        assert_eq!(color.r, 0.0);
+        assert_eq!(color.g, 0.0);
+        assert_eq!(color.b, 0.0);
+
+        // All white
+        let color = Color::from_hex("#ffffff").unwrap();
+        assert_eq!(color.r, 1.0);
+        assert_eq!(color.g, 1.0);
+        assert_eq!(color.b, 1.0);
+    }
+
+    #[test]
+    fn test_color_with_alpha() {
+        let color = Color::from_hex("#89b4fa").unwrap();
+        let transparent = color.with_alpha(0.5);
+
+        assert_eq!(transparent.a, 0.5);
+        assert_eq!(transparent.r, color.r);
+        assert_eq!(transparent.g, color.g);
+        assert_eq!(transparent.b, color.b);
+    }
+
+    #[test]
+    fn test_color_with_alpha_extremes() {
+        let color = Color::from_hex("#89b4fa").unwrap();
+
+        let fully_transparent = color.with_alpha(0.0);
+        assert_eq!(fully_transparent.a, 0.0);
+
+        let fully_opaque = color.with_alpha(1.0);
+        assert_eq!(fully_opaque.a, 1.0);
+    }
+}
