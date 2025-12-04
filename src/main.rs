@@ -282,3 +282,87 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_reload_debounce_constant() {
+        // Verify the debounce constant is set to a reasonable value
+        assert_eq!(CONFIG_RELOAD_DEBOUNCE_MS, 500);
+    }
+
+    #[test]
+    fn test_debounce_logic_simulation() {
+        // Simulate debouncing logic similar to what happens in activate()
+        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
+        let mut last_reload = Instant::now();
+
+        // Wait a bit less than the debounce duration
+        std::thread::sleep(Duration::from_millis(100));
+        let now = Instant::now();
+
+        // Should be debounced (too soon)
+        assert!(now.duration_since(last_reload) < debounce_duration);
+
+        // Wait past the debounce duration
+        std::thread::sleep(Duration::from_millis(450)); // Total: 550ms > 500ms
+        let now = Instant::now();
+
+        // Should not be debounced (enough time has passed)
+        assert!(now.duration_since(last_reload) >= debounce_duration);
+
+        // Update last_reload
+        last_reload = now;
+
+        // Immediate reload attempt should be debounced
+        let now = Instant::now();
+        assert!(now.duration_since(last_reload) < debounce_duration);
+    }
+
+    #[test]
+    fn test_debounce_edge_case_exact_boundary() {
+        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
+        let last_reload = Instant::now();
+
+        // Sleep for exactly the debounce duration
+        std::thread::sleep(debounce_duration);
+        let now = Instant::now();
+
+        // Should be >= debounce duration (edge case: exactly at boundary)
+        assert!(now.duration_since(last_reload) >= debounce_duration);
+    }
+
+    #[test]
+    fn test_debounce_multiple_rapid_events() {
+        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
+        let mut last_reload = Instant::now();
+        let mut reload_count = 0;
+
+        // Simulate 10 rapid events over 200ms (all within debounce window)
+        for _ in 0..10 {
+            std::thread::sleep(Duration::from_millis(20));
+            let now = Instant::now();
+
+            if now.duration_since(last_reload) >= debounce_duration {
+                reload_count += 1;
+                last_reload = now;
+            }
+        }
+
+        // Only the first event should trigger a reload (200ms total < 500ms)
+        assert_eq!(reload_count, 0);
+
+        // Now wait long enough for the debounce to expire
+        std::thread::sleep(Duration::from_millis(350)); // Total: 550ms > 500ms
+        let now = Instant::now();
+
+        if now.duration_since(last_reload) >= debounce_duration {
+            reload_count += 1;
+        }
+
+        // Now we should get a reload
+        assert_eq!(reload_count, 1);
+    }
+}

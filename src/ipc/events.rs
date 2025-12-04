@@ -216,3 +216,79 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
         is_floating,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_socket_path_valid_absolute_paths() {
+        // Valid absolute paths should succeed
+        assert!(validate_socket_path("/run/user/1000/niri.sock").is_ok());
+        assert!(validate_socket_path("/tmp/niri.sock").is_ok());
+        assert!(validate_socket_path("/run/user/12345/niri-wayland.sock").is_ok());
+    }
+
+    #[test]
+    fn test_validate_socket_path_rejects_relative_paths() {
+        // Relative paths should be rejected
+        assert!(validate_socket_path("./niri.sock").is_err());
+        assert!(validate_socket_path("../niri.sock").is_err());
+        assert!(validate_socket_path("niri.sock").is_err());
+    }
+
+    #[test]
+    fn test_validate_socket_path_empty() {
+        // Empty path should be rejected
+        assert!(validate_socket_path("").is_err());
+    }
+
+    #[test]
+    fn test_validate_socket_path_unexpected_location() {
+        // Unexpected locations should succeed but log a warning
+        // (we can't test the warning without complex tracing setup)
+        assert!(validate_socket_path("/home/user/niri.sock").is_ok());
+        assert!(validate_socket_path("/var/niri.sock").is_ok());
+    }
+
+    #[test]
+    fn test_validate_and_convert_indices_normal_conversion() {
+        // Normal 1-based to 0-based conversion
+        assert_eq!(validate_and_convert_indices(1, 1, 100), (0, 0));
+        assert_eq!(validate_and_convert_indices(2, 1, 100), (1, 0));
+        assert_eq!(validate_and_convert_indices(1, 2, 100), (0, 1));
+        assert_eq!(validate_and_convert_indices(5, 3, 100), (4, 2));
+    }
+
+    #[test]
+    fn test_validate_and_convert_indices_zero_handling() {
+        // Zero values should saturate to 0 (invalid input)
+        assert_eq!(validate_and_convert_indices(0, 1, 100), (0, 0));
+        assert_eq!(validate_and_convert_indices(1, 0, 100), (0, 0));
+        assert_eq!(validate_and_convert_indices(0, 0, 100), (0, 0));
+    }
+
+    #[test]
+    fn test_validate_and_convert_indices_max_value() {
+        // usize::MAX should saturate correctly
+        assert_eq!(
+            validate_and_convert_indices(usize::MAX, 1, 100),
+            (usize::MAX - 1, 0)
+        );
+        assert_eq!(
+            validate_and_convert_indices(1, usize::MAX, 100),
+            (0, usize::MAX - 1)
+        );
+        assert_eq!(
+            validate_and_convert_indices(usize::MAX, usize::MAX, 100),
+            (usize::MAX - 1, usize::MAX - 1)
+        );
+    }
+
+    #[test]
+    fn test_validate_and_convert_indices_large_values() {
+        // Large values should convert correctly
+        assert_eq!(validate_and_convert_indices(1000, 500, 100), (999, 499));
+        assert_eq!(validate_and_convert_indices(999999, 123456, 100), (999998, 123455));
+    }
+}
