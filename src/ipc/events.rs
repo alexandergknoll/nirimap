@@ -67,8 +67,6 @@ fn fetch_initial_state() -> Result<MinimapState> {
     // Process workspaces
     for ws in workspaces {
         let workspace = Workspace {
-            id: ws.id,
-            name: ws.name,
             is_active: ws.is_focused, // is_focused means it's the globally focused workspace
             ..Default::default()
         };
@@ -210,8 +208,6 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
 
     Window {
         id: win.id,
-        app_id: win.app_id.clone().unwrap_or_default(),
-        title: win.title.clone().unwrap_or_default(),
         pos,
         size: layout.tile_size,
         column_index,

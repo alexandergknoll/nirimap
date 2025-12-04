@@ -120,11 +120,6 @@ impl MinimapWidget {
         }
     }
 
-    /// Check if minimap should always be visible
-    pub fn is_always_visible(&self) -> bool {
-        self.config.borrow().behavior.always_visible
-    }
-
     /// Reload the configuration from disk
     pub fn reload_config(&self) {
         match Config::load() {
