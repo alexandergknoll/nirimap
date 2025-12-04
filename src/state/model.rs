@@ -152,9 +152,15 @@ impl MinimapState {
 
         // Set new active state
         self.active_workspace_id = Some(workspace_id);
-        if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
-            workspace.is_active = true;
-        }
+
+        // Ensure the workspace exists (create if necessary for dynamically created workspaces)
+        let workspace = self.workspaces.entry(workspace_id).or_insert_with(|| {
+            Workspace {
+                id: workspace_id,
+                ..Default::default()
+            }
+        });
+        workspace.is_active = true;
     }
 
     /// Clear all state
