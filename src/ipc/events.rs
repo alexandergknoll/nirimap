@@ -94,10 +94,39 @@ fn fetch_initial_state() -> Result<MinimapState> {
     Ok(state)
 }
 
+/// Validate the socket path for security
+fn validate_socket_path(socket_path: &str) -> Result<()> {
+    use std::path::Path;
+
+    let path = Path::new(socket_path);
+
+    // Ensure the path is absolute (prevents relative path attacks)
+    if !path.is_absolute() {
+        anyhow::bail!("NIRI_SOCKET must be an absolute path, got: {}", socket_path);
+    }
+
+    // Check if the path is in expected locations for security
+    // Typically: /run/user/<uid>/ or /tmp/
+    let path_str = socket_path;
+    let is_expected_location = path_str.starts_with("/run/user/") || path_str.starts_with("/tmp/");
+
+    if !is_expected_location {
+        tracing::warn!(
+            "NIRI_SOCKET is in an unexpected location: {}. Expected /run/user/<uid>/ or /tmp/",
+            socket_path
+        );
+    }
+
+    Ok(())
+}
+
 /// Connect to the event stream
 fn connect_event_stream() -> Result<BufReader<UnixStream>> {
     let socket_path = std::env::var("NIRI_SOCKET")
         .context("NIRI_SOCKET environment variable not set. Is Niri running?")?;
+
+    // Validate the socket path for security
+    validate_socket_path(&socket_path)?;
 
     let stream = UnixStream::connect(&socket_path)
         .with_context(|| format!("Failed to connect to Niri socket at {}", socket_path))?;
@@ -155,7 +184,16 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
     // Extract position in scrolling layout (column, window_in_column)
     let (column_index, window_index) = layout
         .pos_in_scrolling_layout
-        .map(|(c, w)| (c.saturating_sub(1), w.saturating_sub(1))) // Convert from 1-based to 0-based
+        .map(|(c, w)| {
+            // Validate indices are >= 1 before converting from 1-based to 0-based
+            if c == 0 {
+                tracing::warn!("Invalid column index 0 received from Niri for window {}", win.id);
+            }
+            if w == 0 {
+                tracing::warn!("Invalid window index 0 received from Niri for window {}", win.id);
+            }
+            (c.saturating_sub(1), w.saturating_sub(1))
+        })
         .unwrap_or((0, 0));
 
     // Extract position in workspace view

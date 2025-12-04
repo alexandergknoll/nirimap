@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use gtk4::glib;
@@ -101,15 +102,27 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
 
     // Set up glib idle handler to process state updates and config reloads
     let minimap_clone = minimap.clone();
+    let last_config_reload = Rc::new(RefCell::new(Instant::now()));
+    let config_reload_debounce = Duration::from_millis(500);
+
     glib::idle_add_local(move || {
         // Process all pending state updates
         while let Ok(update) = rx.try_recv() {
             apply_state_update(&minimap_clone, update);
         }
 
-        // Process config reload messages
+        // Process config reload messages with debouncing
         while let Ok(ConfigMessage::Reload) = config_rx.try_recv() {
-            minimap_clone.reload_config();
+            let now = Instant::now();
+            let mut last_reload = last_config_reload.borrow_mut();
+
+            // Only reload if enough time has passed since the last reload
+            if now.duration_since(*last_reload) >= config_reload_debounce {
+                minimap_clone.reload_config();
+                *last_reload = now;
+            } else {
+                tracing::debug!("Config reload debounced (too soon after last reload)");
+            }
         }
 
         glib::ControlFlow::Continue
@@ -248,6 +261,13 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                             window.pos = layout.tile_pos_in_workspace_view.unwrap_or(window.pos);
                             window.size = layout.tile_size;
                             if let Some((col, win_idx)) = layout.pos_in_scrolling_layout {
+                                // Validate indices are >= 1 before converting from 1-based to 0-based
+                                if col == 0 {
+                                    tracing::warn!("Invalid column index 0 received from Niri for window {}", window_id);
+                                }
+                                if win_idx == 0 {
+                                    tracing::warn!("Invalid window index 0 received from Niri for window {}", window_id);
+                                }
                                 window.column_index = col.saturating_sub(1);
                                 window.window_index = win_idx.saturating_sub(1);
                             }
