@@ -40,7 +40,15 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libgtk4-layer-shell-dev
+          sudo apt-get install -y libgtk-4-dev meson ninja-build libwayland-dev wayland-protocols gobject-introspection libgirepository1.0-dev git
+
+      - name: Build and install gtk4-layer-shell
+        run: |
+          git clone https://github.com/wmww/gtk4-layer-shell.git
+          cd gtk4-layer-shell
+          meson setup build -Dprefix=/usr
+          meson compile -C build
+          sudo meson install -C build
 
       - name: Run tests
         run: cargo test --verbose
@@ -76,7 +84,15 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libgtk4-layer-shell-dev
+          sudo apt-get install -y libgtk-4-dev meson ninja-build libwayland-dev wayland-protocols gobject-introspection libgirepository1.0-dev git
+
+      - name: Build and install gtk4-layer-shell
+        run: |
+          git clone https://github.com/wmww/gtk4-layer-shell.git
+          cd gtk4-layer-shell
+          meson setup build -Dprefix=/usr
+          meson compile -C build
+          sudo meson install -C build
 
       - name: Build
         run: cargo build --verbose
@@ -117,7 +133,15 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libgtk4-layer-shell-dev
+          sudo apt-get install -y libgtk-4-dev meson ninja-build libwayland-dev wayland-protocols gobject-introspection libgirepository1.0-dev git
+
+      - name: Build and install gtk4-layer-shell
+        run: |
+          git clone https://github.com/wmww/gtk4-layer-shell.git
+          cd gtk4-layer-shell
+          meson setup build -Dprefix=/usr
+          meson compile -C build
+          sudo meson install -C build
 
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
