@@ -1,12 +1,9 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - master
   pull_request:
-    branches:
-      - master
+  push:
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
