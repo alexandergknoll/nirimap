@@ -227,9 +227,16 @@ impl MinimapWidget {
         let state = self.state.clone();
         let config = self.config.clone();
 
-        self.drawing_area.set_draw_func(move |_area, cr, width, height| {
-            draw_minimap(cr, width, height, &state.borrow(), &config.borrow().appearance);
-        });
+        self.drawing_area
+            .set_draw_func(move |_area, cr, width, height| {
+                draw_minimap(
+                    cr,
+                    width,
+                    height,
+                    &state.borrow(),
+                    &config.borrow().appearance,
+                );
+            });
     }
 }
 
@@ -244,7 +251,8 @@ fn calculate_workspace_dimensions(state: &MinimapState) -> (f64, f64) {
     }
 
     // Group windows by column, excluding floating windows
-    let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> = std::collections::BTreeMap::new();
+    let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> =
+        std::collections::BTreeMap::new();
     for window in workspace.windows.values() {
         if !window.is_floating {
             columns.entry(window.column_index).or_default().push(window);
@@ -290,7 +298,12 @@ fn draw_minimap(
     // Draw background (only if opacity > 0)
     if appearance.background_opacity > 0.0 {
         if let Some(bg_color) = Color::from_hex(&appearance.background) {
-            cr.set_source_rgba(bg_color.r, bg_color.g, bg_color.b, appearance.background_opacity);
+            cr.set_source_rgba(
+                bg_color.r,
+                bg_color.g,
+                bg_color.b,
+                appearance.background_opacity,
+            );
             rounded_rectangle(cr, 0.0, 0.0, width, height, appearance.border_radius * 2.0);
             cr.fill().ok();
         }
@@ -319,7 +332,8 @@ fn draw_minimap(
     }
 
     // Group tiled windows by column and sort by window_index within each column
-    let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> = std::collections::BTreeMap::new();
+    let mut columns: std::collections::BTreeMap<usize, Vec<&Window>> =
+        std::collections::BTreeMap::new();
     for window in tiled_windows {
         columns.entry(window.column_index).or_default().push(window);
     }
@@ -366,12 +380,24 @@ fn draw_minimap(
     let offset_y = padding;
 
     // Get colors
-    let window_color = Color::from_hex(&appearance.window_color)
-        .unwrap_or(Color { r: 0.27, g: 0.28, b: 0.35, a: 1.0 });
-    let focused_color = Color::from_hex(&appearance.focused_color)
-        .unwrap_or(Color { r: 0.54, g: 0.71, b: 0.98, a: 1.0 });
-    let border_color = Color::from_hex(&appearance.border_color)
-        .unwrap_or(Color { r: 0.42, g: 0.44, b: 0.53, a: 1.0 });
+    let window_color = Color::from_hex(&appearance.window_color).unwrap_or(Color {
+        r: 0.27,
+        g: 0.28,
+        b: 0.35,
+        a: 1.0,
+    });
+    let focused_color = Color::from_hex(&appearance.focused_color).unwrap_or(Color {
+        r: 0.54,
+        g: 0.71,
+        b: 0.98,
+        a: 1.0,
+    });
+    let border_color = Color::from_hex(&appearance.border_color).unwrap_or(Color {
+        r: 0.42,
+        g: 0.44,
+        b: 0.53,
+        a: 1.0,
+    });
 
     let gap = appearance.gap;
     let half_gap = gap / 2.0;
@@ -423,7 +449,12 @@ fn draw_minimap(
 
             // Draw border on all windows
             if appearance.border_width > 0.0 {
-                cr.set_source_rgba(border_color.r, border_color.g, border_color.b, border_color.a);
+                cr.set_source_rgba(
+                    border_color.r,
+                    border_color.g,
+                    border_color.b,
+                    border_color.a,
+                );
                 cr.set_line_width(appearance.border_width);
                 rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
                 cr.stroke().ok();
@@ -534,9 +565,33 @@ fn rounded_rectangle(cr: &Context, x: f64, y: f64, width: f64, height: f64, radi
     let radius = radius.min(width / 2.0).min(height / 2.0);
 
     cr.new_path();
-    cr.arc(x + width - radius, y + radius, radius, -std::f64::consts::FRAC_PI_2, 0.0);
-    cr.arc(x + width - radius, y + height - radius, radius, 0.0, std::f64::consts::FRAC_PI_2);
-    cr.arc(x + radius, y + height - radius, radius, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
-    cr.arc(x + radius, y + radius, radius, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+    cr.arc(
+        x + width - radius,
+        y + radius,
+        radius,
+        -std::f64::consts::FRAC_PI_2,
+        0.0,
+    );
+    cr.arc(
+        x + width - radius,
+        y + height - radius,
+        radius,
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+    );
+    cr.arc(
+        x + radius,
+        y + height - radius,
+        radius,
+        std::f64::consts::FRAC_PI_2,
+        std::f64::consts::PI,
+    );
+    cr.arc(
+        x + radius,
+        y + radius,
+        radius,
+        std::f64::consts::PI,
+        3.0 * std::f64::consts::FRAC_PI_2,
+    );
     cr.close_path();
 }

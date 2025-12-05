@@ -139,12 +139,13 @@ fn connect_event_stream() -> Result<BufReader<UnixStream>> {
 
     // Read and discard the initial reply ({"Ok":"Handled"})
     let mut reply_line = String::new();
-    reader.read_line(&mut reply_line)
+    reader
+        .read_line(&mut reply_line)
         .context("Failed to read EventStream reply")?;
 
     // Verify it was successful
-    let reply: Result<niri_ipc::Response, String> = serde_json::from_str(&reply_line)
-        .context("Failed to parse EventStream reply")?;
+    let reply: Result<niri_ipc::Response, String> =
+        serde_json::from_str(&reply_line).context("Failed to parse EventStream reply")?;
 
     if let Err(e) = reply {
         anyhow::bail!("EventStream request failed: {}", e);
@@ -160,10 +161,16 @@ fn connect_event_stream() -> Result<BufReader<UnixStream>> {
 pub fn validate_and_convert_indices(col: usize, win_idx: usize, window_id: u64) -> (usize, usize) {
     // Validate indices are >= 1 (Niri uses 1-based indexing)
     if col == 0 {
-        tracing::warn!("Invalid column index 0 received from Niri for window {}", window_id);
+        tracing::warn!(
+            "Invalid column index 0 received from Niri for window {}",
+            window_id
+        );
     }
     if win_idx == 0 {
-        tracing::warn!("Invalid window index 0 received from Niri for window {}", window_id);
+        tracing::warn!(
+            "Invalid window index 0 received from Niri for window {}",
+            window_id
+        );
     }
 
     // Convert from 1-based to 0-based, saturating at 0 for invalid inputs
@@ -182,9 +189,7 @@ fn event_to_update(event: Event) -> Option<StateUpdate> {
         Event::WorkspaceActivated { id, focused } => {
             Some(StateUpdate::WorkspaceActivated { id, focused })
         }
-        Event::WindowLayoutsChanged { changes } => {
-            Some(StateUpdate::LayoutsChanged(changes))
-        }
+        Event::WindowLayoutsChanged { changes } => Some(StateUpdate::LayoutsChanged(changes)),
         // Ignore other events for now
         _ => None,
     }
@@ -289,6 +294,9 @@ mod tests {
     fn test_validate_and_convert_indices_large_values() {
         // Large values should convert correctly
         assert_eq!(validate_and_convert_indices(1000, 500, 100), (999, 499));
-        assert_eq!(validate_and_convert_indices(999999, 123456, 100), (999998, 123455));
+        assert_eq!(
+            validate_and_convert_indices(999999, 123456, 100),
+            (999998, 123455)
+        );
     }
 }

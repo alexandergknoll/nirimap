@@ -45,9 +45,7 @@ fn main() -> Result<()> {
     tracing::info!("Loaded configuration from {:?}", Config::config_path());
 
     // Create GTK application
-    let app = gtk4::Application::builder()
-        .application_id(APP_ID)
-        .build();
+    let app = gtk4::Application::builder().application_id(APP_ID).build();
 
     // Wrap config in Rc<RefCell> for hot reload support
     let config = Rc::new(RefCell::new(config));

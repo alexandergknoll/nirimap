@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use niri_ipc::{Reply, Request, Response};
 use niri_ipc::socket::Socket;
+use niri_ipc::{Reply, Request, Response};
 
 /// Client for communicating with Niri via IPC
 pub struct NiriClient {
@@ -11,12 +11,12 @@ impl NiriClient {
     /// Create a new client connected to the Niri socket
     pub fn connect() -> Result<Self> {
         // Validate socket path before connecting
-        let socket_path = std::env::var("NIRI_SOCKET")
-            .context("NIRI_SOCKET environment variable not set")?;
+        let socket_path =
+            std::env::var("NIRI_SOCKET").context("NIRI_SOCKET environment variable not set")?;
         super::events::validate_socket_path(&socket_path)?;
 
-        let socket = Socket::connect()
-            .context("Failed to connect to Niri socket. Is Niri running?")?;
+        let socket =
+            Socket::connect().context("Failed to connect to Niri socket. Is Niri running?")?;
         Ok(Self { socket })
     }
 

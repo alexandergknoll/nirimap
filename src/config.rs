@@ -118,11 +118,13 @@ impl Config {
         let config_path = Self::config_path();
 
         if config_path.exists() {
-            let contents = std::fs::read_to_string(&config_path)
-                .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
+            let contents = std::fs::read_to_string(&config_path).with_context(|| {
+                format!("Failed to read config file: {}", config_path.display())
+            })?;
 
-            let config: Config = toml::from_str(&contents)
-                .with_context(|| format!("Failed to parse config file: {}", config_path.display()))?;
+            let config: Config = toml::from_str(&contents).with_context(|| {
+                format!("Failed to parse config file: {}", config_path.display())
+            })?;
 
             Ok(config)
         } else {
@@ -145,8 +147,9 @@ impl Config {
     fn save_default(&self) -> Result<()> {
         let config_path = Self::config_path();
         if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create config directory: {}", parent.display())
+            })?;
         }
 
         let default_config = r##"[display]
@@ -173,8 +176,9 @@ always_visible = true     # Always show minimap (false = only on focus change)
 hide_timeout_ms = 2000    # Milliseconds before hiding after focus change
 "##;
 
-        std::fs::write(&config_path, default_config)
-            .with_context(|| format!("Failed to write default config: {}", config_path.display()))?;
+        std::fs::write(&config_path, default_config).with_context(|| {
+            format!("Failed to write default config: {}", config_path.display())
+        })?;
 
         tracing::info!("Created default config at {}", config_path.display());
         Ok(())
@@ -238,8 +242,8 @@ mod tests {
         assert_eq!(config.appearance.background_opacity, 0.9);
 
         // Test behavior defaults
-        assert_eq!(config.behavior.show_on_overview, true);
-        assert_eq!(config.behavior.always_visible, true);
+        assert!(config.behavior.show_on_overview);
+        assert!(config.behavior.always_visible);
         assert_eq!(config.behavior.hide_timeout_ms, 2000);
     }
 
