@@ -48,9 +48,6 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
-      - name: Run tests in config.rs
-        run: cargo test --lib config::tests --verbose
-
   build:
     name: Build
     runs-on: ubuntu-latest
