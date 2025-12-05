@@ -46,7 +46,7 @@ jobs:
         run: |
           git clone https://github.com/wmww/gtk4-layer-shell.git
           cd gtk4-layer-shell
-          meson setup build -Dprefix=/usr
+          meson setup build -Dprefix=/usr -Dvapi=false -Dintrospection=false -Ddocs=false -Dexamples=false
           meson compile -C build
           sudo meson install -C build
 
@@ -90,7 +90,7 @@ jobs:
         run: |
           git clone https://github.com/wmww/gtk4-layer-shell.git
           cd gtk4-layer-shell
-          meson setup build -Dprefix=/usr
+          meson setup build -Dprefix=/usr -Dvapi=false -Dintrospection=false -Ddocs=false -Dexamples=false
           meson compile -C build
           sudo meson install -C build
 
@@ -139,7 +139,7 @@ jobs:
         run: |
           git clone https://github.com/wmww/gtk4-layer-shell.git
           cd gtk4-layer-shell
-          meson setup build -Dprefix=/usr
+          meson setup build -Dprefix=/usr -Dvapi=false -Dintrospection=false -Ddocs=false -Dexamples=false
           meson compile -C build
           sudo meson install -C build
 
