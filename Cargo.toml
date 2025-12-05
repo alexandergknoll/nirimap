@@ -1,7 +1,7 @@
 [package]
 name = "nirimap"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "A minimap overlay for the Niri Wayland compositor"
 license = "MIT"
 repository = "https://github.com/alex/nirimap"
