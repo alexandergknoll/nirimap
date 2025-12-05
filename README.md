@@ -1,5 +1,7 @@
 # nirimap
 
+[![CI](https://github.com/alexandergknoll/nirimap/actions/workflows/ci.yml/badge.svg)](https://github.com/alexandergknoll/nirimap/actions/workflows/ci.yml)
+
 A minimal workspace minimap overlay for the [Niri](https://github.com/YaLTeR/niri) Wayland compositor.
 
 > [!WARNING]
