@@ -107,10 +107,14 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
     let last_config_reload = Rc::new(RefCell::new(Instant::now()));
     let config_reload_debounce = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
 
-    glib::idle_add_local(move || {
-        // Process all pending state updates
-        while let Ok(update) = rx.try_recv() {
-            apply_state_update(&minimap_clone, update);
+    glib::timeout_add_local(Duration::from_millis(50), move || {
+        // Process a batch of state updates
+        for _ in 0..10 {
+            if let Ok(update) = rx.try_recv() {
+                apply_state_update(&minimap_clone, update);
+            } else {
+                break;
+            }
         }
 
         // Process config reload messages with debouncing
