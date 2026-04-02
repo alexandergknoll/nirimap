@@ -53,12 +53,6 @@ impl MinimapState {
             .and_then(|id| self.workspaces.get(&id))
     }
 
-    /// Get a mutable reference to the active workspace
-    pub fn active_workspace_mut(&mut self) -> Option<&mut Workspace> {
-        self.active_workspace_id
-            .and_then(|id| self.workspaces.get_mut(&id))
-    }
-
     /// Update or insert a window in the appropriate workspace
     pub fn upsert_window(&mut self, workspace_id: u64, window: Window) {
         let workspace = self
