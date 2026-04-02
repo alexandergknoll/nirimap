@@ -108,6 +108,12 @@ The minimap hides automatically after `hide_timeout_ms` milliseconds.
 
 ## Known Limitations
 
+### Multi-Monitor Support
+
+nirimap currently only tracks and displays windows on a single monitor. Multi-monitor setups may result in windows not appearing on the minimap or incorrect workspace tracking. Full multi-monitor support is planned.
+
+See [Issue #21](https://github.com/alexandergknoll/nirimap/issues/21) for more details.
+
 ### Floating Windows
 
 Floating windows are currently not displayed on the minimap. This is due to a limitation in Niri's IPC API, which doesn't expose viewport scroll position information needed to accurately calculate floating window positions on the minimap.
