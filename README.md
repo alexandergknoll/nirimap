@@ -4,9 +4,6 @@
 
 A minimal workspace minimap overlay for the [Niri](https://github.com/YaLTeR/niri) Wayland compositor.
 
-> [!WARNING]
-> **AI-Generated Code**: This application was created by Claude Code. Please review the source code before installing or running on your system. Use at your own risk.
-
 ## Features
 
 - Displays a minimap of your current workspace showing window layout
@@ -16,10 +13,6 @@ A minimal workspace minimap overlay for the [Niri](https://github.com/YaLTeR/nir
 - Configurable visibility behavior (always visible or show on events)
 - Hot-reloads configuration changes
 - Dynamic width based on workspace content
-
-## Screenshots
-
-*Coming soon*
 
 ## Installation
 
@@ -135,4 +128,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
-This is a personal project created as an experiment with AI-assisted development. Issues and pull requests are welcome, but please note the experimental nature of the codebase.
+Issues and pull requests are welcome! This project was developed with the help of AI-assisted tooling (Claude Code) — please review changes carefully and feel free to flag anything that looks off.
