@@ -42,9 +42,18 @@ where
             continue;
         }
 
-        // Parse the event
-        let event: Event = serde_json::from_str(&line)
-            .with_context(|| format!("Failed to parse event: {}", line))?;
+        // Parse the event, skipping unrecognized events for forward compatibility
+        let event: Event = match serde_json::from_str(&line) {
+            Ok(e) => e,
+            Err(err) => {
+                tracing::warn!(
+                    "Skipping unrecognized event ({}): {}",
+                    err,
+                    &line[..line.len().min(100)]
+                );
+                continue;
+            }
+        };
 
         // Convert to state update
         if let Some(update) = event_to_update(event) {
