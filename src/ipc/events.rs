@@ -11,7 +11,10 @@ pub enum StateUpdate {
     /// Full state refresh
     FullState(MinimapState),
     /// A window was opened or changed
-    WindowChanged(Window),
+    WindowChanged {
+        window: Window,
+        workspace_id: Option<u64>,
+    },
     /// A window was closed
     WindowClosed(u64),
     /// Window focus changed
@@ -181,8 +184,12 @@ pub fn validate_and_convert_indices(col: usize, win_idx: usize, window_id: u64) 
 fn event_to_update(event: Event) -> Option<StateUpdate> {
     match event {
         Event::WindowOpenedOrChanged { window } => {
+            let workspace_id = window.workspace_id;
             let model_window = niri_window_to_model(&window);
-            Some(StateUpdate::WindowChanged(model_window))
+            Some(StateUpdate::WindowChanged {
+                window: model_window,
+                workspace_id,
+            })
         }
         Event::WindowClosed { id } => Some(StateUpdate::WindowClosed(id)),
         Event::WindowFocusChanged { id } => Some(StateUpdate::FocusChanged(id)),
