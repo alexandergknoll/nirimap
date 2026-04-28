@@ -24,7 +24,7 @@ pub fn create_layer_window(app: &Application, config: &Config) -> ApplicationWin
     window.init_layer_shell();
 
     // Set the namespace for layer rules
-    window.set_namespace("nirimap");
+    window.set_namespace(Some("nirimap"));
 
     // Set layer to overlay (above fullscreen windows)
     window.set_layer(Layer::Overlay);
@@ -82,7 +82,7 @@ pub fn create_layer_window(app: &Application, config: &Config) -> ApplicationWin
         if let Some(surface) = window.surface() {
             // Create an empty region for input - this makes the surface click-through
             let empty_region = gtk4::cairo::Region::create();
-            surface.set_input_region(&empty_region);
+            surface.set_input_region(Some(&empty_region));
         }
     });
 
