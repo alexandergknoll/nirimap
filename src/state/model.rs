@@ -88,7 +88,9 @@ impl MinimapState {
     /// - Removes workspaces not in `incoming` (their windows are dropped too).
     /// - Updates `idx`, `output`, `is_active` on existing workspaces.
     /// - Inserts new workspaces as empty.
-    /// - Updates `active_workspace_id` from whichever workspace has `is_focused`.
+    /// - Updates `active_workspace_id` to the incoming `is_focused` workspace.
+    ///   If none is focused, keeps the previous value when that workspace
+    ///   still exists, otherwise leaves it as `None`.
     pub fn replace_workspace_metadata(&mut self, incoming: &[niri_ipc::Workspace]) {
         use std::collections::HashSet;
 

@@ -406,6 +406,7 @@ fn compute_all_mode_geometry(
     workspace_gap: f64,
     max_width: f64,
     max_height: f64,
+    viewport_width: f64,
 ) -> AllModeGeometry {
     let row_height_cfg = display.height as f64;
     let min_widget_width = row_height_cfg;
@@ -446,7 +447,7 @@ fn compute_all_mode_geometry(
         .fold(f64::NEG_INFINITY, f64::max);
     let has_content = combined_left.is_finite() && combined_right.is_finite();
 
-    let (scaled_content_width, viewport_anchor_x) = if has_content {
+    let (scaled_content_width, ideal_anchor) = if has_content {
         let w = (combined_right - combined_left) * scale;
         // Place the leftmost anchored content at x = PADDING; then anchored x=0
         // (each workspace's viewport left edge) lives at:
@@ -458,6 +459,20 @@ fn compute_all_mode_geometry(
 
     let ideal_width = scaled_content_width + PADDING * 2.0;
     let widget_width = ideal_width.min(max_width).max(min_widget_width);
+
+    // If content fits, keep the leftmost-anchored layout. If we got clamped
+    // narrower, shifting `viewport_anchor_x` keeps the leftmost extent at
+    // PADDING but pushes content past the right edge — and a workspace with a
+    // large left-side off-viewport context (large `align_x`) can drag every
+    // workspace's viewport off the visible widget. Re-center on the viewport
+    // (anchored x in [0, viewport_width]) instead so it's always visible.
+    let inner_width = (widget_width - PADDING * 2.0).max(0.0);
+    let viewport_anchor_x = if !has_content || scaled_content_width <= inner_width {
+        ideal_anchor
+    } else {
+        let viewport_scaled = viewport_width * scale;
+        PADDING + (inner_width - viewport_scaled) / 2.0
+    };
 
     AllModeGeometry {
         widget_width,
@@ -504,8 +519,14 @@ fn compute_widget_dimensions(
         }
         WorkspaceMode::All => {
             let rows = all_mode_rows(state, viewport_width);
-            let geom =
-                compute_all_mode_geometry(&rows, display, workspace_gap, max_width, max_height);
+            let geom = compute_all_mode_geometry(
+                &rows,
+                display,
+                workspace_gap,
+                max_width,
+                max_height,
+                viewport_width,
+            );
 
             WidgetDimensions {
                 width: geom.widget_width,
@@ -589,8 +610,14 @@ fn draw_minimap(
             // max_height is effectively the current height — we use the drawing area's
             // reported height as both the ideal and the cap to stay consistent with
             // what was set by update_size().
-            let geom =
-                compute_all_mode_geometry(&rows, display, appearance.workspace_gap, width, height);
+            let geom = compute_all_mode_geometry(
+                &rows,
+                display,
+                appearance.workspace_gap,
+                width,
+                height,
+                viewport_width,
+            );
 
             let active_border = Color::from_hex(&appearance.active_workspace_border_color)
                 .unwrap_or(Color {
