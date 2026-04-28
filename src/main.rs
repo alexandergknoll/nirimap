@@ -276,13 +276,36 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
             }
         }
 
+        StateUpdate::WorkspacesChanged(workspaces) => {
+            minimap.update_state(|state| {
+                state.replace_workspace_metadata(&workspaces);
+            });
+            tracing::debug!("Workspaces changed ({} total)", workspaces.len());
+        }
+
+        StateUpdate::WorkspaceActiveWindowChanged {
+            workspace_id,
+            active_window_id,
+        } => {
+            minimap.update_state(|state| {
+                if let Some(ws) = state.workspaces.get_mut(&workspace_id) {
+                    ws.active_window_id = active_window_id;
+                }
+            });
+            tracing::debug!(
+                "Workspace {} active window -> {:?}",
+                workspace_id,
+                active_window_id
+            );
+        }
+
         StateUpdate::LayoutsChanged(layouts) => {
             minimap.update_state(|state| {
                 for (window_id, layout) in layouts {
                     // Find and update the window's layout
                     for workspace in state.workspaces.values_mut() {
                         if let Some(window) = workspace.windows.get_mut(&window_id) {
-                            window.pos = layout.tile_pos_in_workspace_view.unwrap_or(window.pos);
+                            window.pos = layout.tile_pos_in_workspace_view;
                             window.size = layout.tile_size;
                             // Update floating status
                             window.is_floating = layout.pos_in_scrolling_layout.is_none();
