@@ -5,8 +5,11 @@ use std::collections::HashMap;
 pub struct Window {
     /// Unique window identifier from Niri
     pub id: u64,
-    /// Position in workspace view coordinates (x, y)
-    pub pos: (f64, f64),
+    /// Position in workspace view coordinates (x, y), if known. Niri only
+    /// populates `tile_pos_in_workspace_view` for windows whose tile is
+    /// currently positioned in the viewport; off-viewport windows arrive as
+    /// `None`. Don't treat `None` as `(0, 0)` — that destroys the distinction.
+    pub pos: Option<(f64, f64)>,
     /// Window tile size (width, height)
     pub size: (f64, f64),
     /// Column index in the scrolling layout
@@ -22,10 +25,19 @@ pub struct Window {
 /// Represents a workspace containing windows
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
+    /// Niri workspace id (stable across moves/reorder)
+    pub id: u64,
+    /// Index of the workspace on its monitor (display order)
+    pub idx: u8,
+    /// Name of the output this workspace is on, if any
+    pub output: Option<String>,
     /// Windows in this workspace, keyed by window ID
     pub windows: HashMap<u64, Window>,
     /// Whether this workspace is currently active
     pub is_active: bool,
+    /// The most-recently-focused window id on this workspace, if any. Niri
+    /// tracks this per workspace and uses it for Overview-style alignment.
+    pub active_window_id: Option<u64>,
 }
 
 impl Workspace {}
@@ -53,12 +65,61 @@ impl MinimapState {
             .and_then(|id| self.workspaces.get(&id))
     }
 
+    /// Workspaces sorted for display (by output, then idx).
+    ///
+    /// Workspaces without an output sort last; within the same output they
+    /// are ordered by `idx` ascending.
+    pub fn workspaces_sorted(&self) -> Vec<&Workspace> {
+        let mut out: Vec<&Workspace> = self.workspaces.values().collect();
+        out.sort_by(|a, b| {
+            a.output
+                .is_none()
+                .cmp(&b.output.is_none())
+                .then_with(|| a.output.cmp(&b.output))
+                .then_with(|| a.idx.cmp(&b.idx))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        out
+    }
+
+    /// Replace workspace metadata from a fresh snapshot, preserving existing
+    /// window data for workspaces that still exist.
+    ///
+    /// - Removes workspaces not in `incoming` (their windows are dropped too).
+    /// - Updates `idx`, `output`, `is_active` on existing workspaces.
+    /// - Inserts new workspaces as empty.
+    /// - Updates `active_workspace_id` from whichever workspace has `is_focused`.
+    pub fn replace_workspace_metadata(&mut self, incoming: &[niri_ipc::Workspace]) {
+        use std::collections::HashSet;
+
+        let incoming_ids: HashSet<u64> = incoming.iter().map(|w| w.id).collect();
+        self.workspaces.retain(|id, _| incoming_ids.contains(id));
+
+        for ws in incoming {
+            let entry = self.workspaces.entry(ws.id).or_insert_with(|| Workspace {
+                id: ws.id,
+                ..Default::default()
+            });
+            entry.id = ws.id;
+            entry.idx = ws.idx;
+            entry.output = ws.output.clone();
+            entry.is_active = ws.is_active;
+            entry.active_window_id = ws.active_window_id;
+        }
+
+        // Track the globally focused workspace (there is at most one).
+        self.active_workspace_id = incoming.iter().find(|w| w.is_focused).map(|w| w.id).or(self
+            .active_workspace_id
+            .filter(|id| incoming_ids.contains(id)));
+    }
+
     /// Update or insert a window in the appropriate workspace
     pub fn upsert_window(&mut self, workspace_id: u64, window: Window) {
         let workspace = self
             .workspaces
             .entry(workspace_id)
             .or_insert_with(|| Workspace {
+                id: workspace_id,
                 ..Default::default()
             });
         workspace.windows.insert(window.id, window);
@@ -108,6 +169,7 @@ impl MinimapState {
             .workspaces
             .entry(workspace_id)
             .or_insert_with(|| Workspace {
+                id: workspace_id,
                 ..Default::default()
             });
         workspace.is_active = true;
@@ -121,7 +183,7 @@ mod tests {
     fn create_test_window(id: u64, x: f64, y: f64, width: f64, height: f64) -> Window {
         Window {
             id,
-            pos: (x, y),
+            pos: Some((x, y)),
             size: (width, height),
             column_index: 0,
             window_index: 0,
@@ -162,7 +224,7 @@ mod tests {
         let workspace = state.workspaces.get(&1).unwrap();
         assert_eq!(workspace.windows.len(), 1);
         let window = workspace.windows.get(&1).unwrap();
-        assert_eq!(window.pos, (50.0, 50.0));
+        assert_eq!(window.pos, Some((50.0, 50.0)));
         assert_eq!(window.size, (150.0, 250.0));
     }
 
@@ -263,5 +325,94 @@ mod tests {
     fn test_minimap_state_active_workspace_none() {
         let state = MinimapState::new();
         assert!(state.active_workspace().is_none());
+    }
+
+    fn ipc_workspace(
+        id: u64,
+        idx: u8,
+        output: Option<&str>,
+        is_active: bool,
+        is_focused: bool,
+    ) -> niri_ipc::Workspace {
+        niri_ipc::Workspace {
+            id,
+            idx,
+            name: None,
+            output: output.map(|s| s.to_string()),
+            is_urgent: false,
+            is_active,
+            is_focused,
+            active_window_id: None,
+        }
+    }
+
+    #[test]
+    fn test_workspaces_sorted_by_output_then_idx() {
+        let mut state = MinimapState::new();
+        let incoming = vec![
+            ipc_workspace(3, 2, Some("DP-1"), false, false),
+            ipc_workspace(1, 1, Some("DP-1"), true, true),
+            ipc_workspace(5, 1, Some("HDMI-1"), true, false),
+            ipc_workspace(7, 99, None, false, false),
+            ipc_workspace(4, 3, Some("DP-1"), false, false),
+        ];
+        state.replace_workspace_metadata(&incoming);
+
+        let sorted_ids: Vec<u64> = state.workspaces_sorted().iter().map(|w| w.id).collect();
+        // DP-1: idx 1, 2, 3 -> 1, 3, 4; then HDMI-1 idx 1 -> 5; then no-output -> 7
+        assert_eq!(sorted_ids, vec![1, 3, 4, 5, 7]);
+    }
+
+    #[test]
+    fn test_replace_workspace_metadata_preserves_windows() {
+        let mut state = MinimapState::new();
+        let window = create_test_window(1, 0.0, 0.0, 100.0, 200.0);
+        state.upsert_window(1, window);
+
+        // Initial: workspace 1 exists with a window
+        assert_eq!(state.workspaces.get(&1).unwrap().windows.len(), 1);
+
+        // Metadata arrives claiming workspace 1 on DP-1, idx=0, focused
+        let incoming = vec![ipc_workspace(1, 0, Some("DP-1"), true, true)];
+        state.replace_workspace_metadata(&incoming);
+
+        let ws = state.workspaces.get(&1).unwrap();
+        assert_eq!(ws.idx, 0);
+        assert_eq!(ws.output.as_deref(), Some("DP-1"));
+        assert!(ws.is_active);
+        // Windows preserved
+        assert_eq!(ws.windows.len(), 1);
+        assert_eq!(state.active_workspace_id, Some(1));
+    }
+
+    #[test]
+    fn test_replace_workspace_metadata_removes_missing() {
+        let mut state = MinimapState::new();
+        state.upsert_window(1, create_test_window(10, 0.0, 0.0, 100.0, 200.0));
+        state.upsert_window(2, create_test_window(20, 0.0, 0.0, 100.0, 200.0));
+        state.active_workspace_id = Some(2);
+
+        // Only workspace 1 survives
+        let incoming = vec![ipc_workspace(1, 0, None, true, true)];
+        state.replace_workspace_metadata(&incoming);
+
+        assert!(state.workspaces.contains_key(&1));
+        assert!(!state.workspaces.contains_key(&2));
+        // Active workspace updated to the focused one
+        assert_eq!(state.active_workspace_id, Some(1));
+    }
+
+    #[test]
+    fn test_replace_workspace_metadata_inserts_new_empty() {
+        let mut state = MinimapState::new();
+        let incoming = vec![
+            ipc_workspace(1, 0, None, true, true),
+            ipc_workspace(2, 1, None, false, false),
+        ];
+        state.replace_workspace_metadata(&incoming);
+
+        assert_eq!(state.workspaces.len(), 2);
+        assert!(state.workspaces.get(&1).unwrap().windows.is_empty());
+        assert!(state.workspaces.get(&2).unwrap().windows.is_empty());
     }
 }

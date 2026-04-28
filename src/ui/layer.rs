@@ -15,6 +15,11 @@ pub fn create_layer_window(app: &Application, config: &Config) -> ApplicationWin
         .resizable(true) // Allow resizing for dynamic width
         .build();
 
+    // Tag the window with a CSS class so our transparency rules can target it
+    // with high specificity (themes commonly set `.background { ... !important }`,
+    // which beats `* { ... !important }` due to specificity).
+    window.add_css_class("nirimap-window");
+
     // Initialize layer shell
     window.init_layer_shell();
 
@@ -42,13 +47,34 @@ pub fn create_layer_window(app: &Application, config: &Config) -> ApplicationWin
     window.set_margin(Edge::Left, config.display.margin_x);
     window.set_margin(Edge::Right, config.display.margin_x);
 
-    // Set up CSS for transparency support
+    // Set up CSS for transparency. GTK renders widget CSS backgrounds in a
+    // separate render node beneath our Cairo content, so we must zero it out
+    // via CSS. Use high-specificity selectors targeting our own CSS class so
+    // theme rules (often `.background { ... !important }`, specificity 0,0,1,0)
+    // can't beat us. Combine class + tag for specificity 0,0,1,1.
     let css_provider = gtk4::CssProvider::new();
-    css_provider.load_from_data("window { background: transparent; }");
+    css_provider.connect_parsing_error(|_, section, error| {
+        tracing::error!(
+            "nirimap transparency CSS parse error at {:?}: {}",
+            section,
+            error
+        );
+    });
+    css_provider.load_from_data(
+        "window.nirimap-window,
+         window.nirimap-window.background,
+         window.nirimap-window > widget,
+         window.nirimap-window > drawingarea,
+         drawingarea.nirimap-canvas {
+             background-color: transparent;
+             background-image: none;
+             box-shadow: none;
+         }",
+    );
     gtk4::style_context_add_provider_for_display(
         &gtk4::gdk::Display::default().expect("Could not get default display"),
         &css_provider,
-        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        gtk4::STYLE_PROVIDER_PRIORITY_USER,
     );
 
     // Set up empty input region for true click-through at Wayland level

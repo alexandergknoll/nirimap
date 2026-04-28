@@ -23,6 +23,13 @@ pub enum StateUpdate {
     WorkspaceActivated { id: u64, focused: bool },
     /// Window layouts changed
     LayoutsChanged(Vec<(u64, niri_ipc::WindowLayout)>),
+    /// Workspace configuration changed (add/remove/reorder)
+    WorkspacesChanged(Vec<niri_ipc::Workspace>),
+    /// The active window on some workspace changed
+    WorkspaceActiveWindowChanged {
+        workspace_id: u64,
+        active_window_id: Option<u64>,
+    },
 }
 
 /// Run the event loop, sending state updates to the provided sender
@@ -79,7 +86,11 @@ fn fetch_initial_state() -> Result<MinimapState> {
     // Process workspaces
     for ws in workspaces {
         let workspace = Workspace {
-            is_active: ws.is_focused, // is_focused means it's the globally focused workspace
+            id: ws.id,
+            idx: ws.idx,
+            output: ws.output.clone(),
+            is_active: ws.is_active,
+            active_window_id: ws.active_window_id,
             ..Default::default()
         };
         state.workspaces.insert(ws.id, workspace);
@@ -206,6 +217,14 @@ fn event_to_update(event: Event) -> Option<StateUpdate> {
             Some(StateUpdate::WorkspaceActivated { id, focused })
         }
         Event::WindowLayoutsChanged { changes } => Some(StateUpdate::LayoutsChanged(changes)),
+        Event::WorkspacesChanged { workspaces } => Some(StateUpdate::WorkspacesChanged(workspaces)),
+        Event::WorkspaceActiveWindowChanged {
+            workspace_id,
+            active_window_id,
+        } => Some(StateUpdate::WorkspaceActiveWindowChanged {
+            workspace_id,
+            active_window_id,
+        }),
         // Ignore other events for now
         _ => None,
     }
@@ -224,12 +243,9 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
         .map(|(c, w)| validate_and_convert_indices(c, w, win.id))
         .unwrap_or((0, 0));
 
-    // Extract position in workspace view
-    let pos = layout.tile_pos_in_workspace_view.unwrap_or((0.0, 0.0));
-
     Window {
         id: win.id,
-        pos,
+        pos: layout.tile_pos_in_workspace_view,
         size: layout.tile_size,
         column_index,
         window_index,

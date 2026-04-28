@@ -6,13 +6,14 @@ A minimal workspace minimap overlay for the [Niri](https://github.com/YaLTeR/nir
 
 ## Features
 
-- Displays a minimap of your current workspace showing window layout
+- Displays a minimap of your workspaces showing window layout
+- Two display modes: show every workspace stacked vertically (Overview-style) or only the active one
 - Renders as an overlay layer surface (visible over fullscreen windows)
 - Click-through design (doesn't intercept mouse events)
 - Configurable appearance (colors, borders, gaps, opacity)
 - Configurable visibility behavior (always visible or show on events)
 - Hot-reloads configuration changes
-- Dynamic width based on workspace content
+- Dynamic sizing based on workspace content
 
 ## Installation
 
@@ -62,12 +63,17 @@ Configuration file is located at `~/.config/nirimap/config.toml`. A default conf
 
 ```toml
 [display]
-height = 100                # Minimap height in pixels (width is dynamic)
+height = 100                # Per-workspace row height in pixels
+                            # "current" mode: whole widget height
+                            # "all" mode: height of a single workspace row
 max_width_percent = 0.5     # Maximum width as fraction of screen (0.0 - 1.0)
+max_height_percent = 0.8    # Maximum height as fraction of screen ("all" mode)
 anchor = "top-right"        # Position: top-left, top-center, top-right,
                             #           bottom-left, bottom-center, bottom-right, center
 margin_x = 10               # Horizontal margin from edge
 margin_y = 10               # Vertical margin from edge
+workspace_mode = "all"      # "all"     - stack every workspace vertically (default)
+                            # "current" - show only the active workspace
 
 [appearance]
 background = "#1e1e2e"    # Background color (hex)
@@ -77,13 +83,28 @@ border_color = "#6c7086"  # Window border color
 border_width = 1            # Window border thickness
 border_radius = 2           # Corner radius for window rectangles
 gap = 2                     # Gap between windows (in minimap pixels)
-background_opacity = 0.9    # Background opacity (0.0 = transparent, 1.0 = opaque)
+background_opacity = 0.0    # Background opacity (0.0 = transparent, 1.0 = opaque)
+                            # Applies in both "current" and "all" modes
+window_opacity = 0.7        # Fill opacity for unfocused windows (0 = outlines only)
+focused_opacity = 1.0       # Fill opacity for the focused window
+workspace_gap = 4                           # Vertical gap between stacked workspaces ("all" mode)
+active_workspace_border_color = "#89b4fa"   # Highlight border for the active workspace ("all" mode)
+active_workspace_border_width = 2           # Highlight border thickness ("all" mode)
 
 [behavior]
 show_on_overview = true     # Keep visible in Niri overview mode (not yet implemented)
 always_visible = true       # Always show minimap (false = only on events)
 hide_timeout_ms = 2000      # Milliseconds before hiding after an event
 ```
+
+### Workspace Display Modes
+
+Two display modes control what the minimap shows:
+
+- **`all`** (default) — every workspace is rendered as a row, stacked vertically in Niri's workspace order (like Niri's Overview feature). The active workspace is highlighted with a border so you can see where focus is at a glance.
+- **`current`** — only the active workspace is rendered. The widget height equals `display.height` and the minimap content changes as you switch workspaces. This is the classic nirimap behavior.
+
+In `all` mode the total widget height grows with the number of workspaces, capped at `max_height_percent` of the monitor's height. When the cap is hit, per-workspace rows shrink proportionally to fit.
 
 ### Hot Reload
 

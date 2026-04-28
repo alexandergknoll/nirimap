@@ -16,20 +16,36 @@ pub enum Anchor {
     Center,
 }
 
+/// Which workspaces the minimap renders
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkspaceMode {
+    /// Render only the currently active workspace
+    Current,
+    /// Render every workspace stacked vertically (Overview-style)
+    #[default]
+    All,
+}
+
 /// Display configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
-    /// Minimap height in pixels (width is calculated dynamically)
+    /// Per-workspace row height in pixels. In `current` mode this is the whole
+    /// widget height; in `all` mode it is the height of a single workspace row.
     pub height: u32,
     /// Maximum width as percentage of screen width (0.0 - 1.0)
     pub max_width_percent: f64,
+    /// Maximum height as percentage of screen height (0.0 - 1.0), used in `all` mode
+    pub max_height_percent: f64,
     /// Position anchor
     pub anchor: Anchor,
     /// Horizontal margin from edge
     pub margin_x: i32,
     /// Vertical margin from edge
     pub margin_y: i32,
+    /// Which workspaces to display
+    pub workspace_mode: WorkspaceMode,
 }
 
 impl Default for DisplayConfig {
@@ -37,9 +53,11 @@ impl Default for DisplayConfig {
         Self {
             height: 100,
             max_width_percent: 0.5,
+            max_height_percent: 0.8,
             anchor: Anchor::TopRight,
             margin_x: 10,
             margin_y: 10,
+            workspace_mode: WorkspaceMode::default(),
         }
     }
 }
@@ -64,6 +82,16 @@ pub struct AppearanceConfig {
     pub gap: f64,
     /// Background opacity (0.0 = transparent, 1.0 = opaque)
     pub background_opacity: f64,
+    /// Fill opacity for unfocused windows (0.0 = transparent, just borders)
+    pub window_opacity: f64,
+    /// Fill opacity for the focused window
+    pub focused_opacity: f64,
+    /// Vertical gap between stacked workspaces in `all` mode
+    pub workspace_gap: f64,
+    /// Border color for the active workspace in `all` mode (hex)
+    pub active_workspace_border_color: String,
+    /// Border thickness for the active workspace in `all` mode
+    pub active_workspace_border_width: f64,
 }
 
 impl Default for AppearanceConfig {
@@ -76,7 +104,12 @@ impl Default for AppearanceConfig {
             border_width: 1.0,
             border_radius: 2.0,
             gap: 2.0,
-            background_opacity: 0.9,
+            background_opacity: 0.0,
+            window_opacity: 0.7,
+            focused_opacity: 1.0,
+            workspace_gap: 4.0,
+            active_workspace_border_color: "#89b4fa".to_string(),
+            active_workspace_border_width: 2.0,
         }
     }
 }
@@ -153,12 +186,18 @@ impl Config {
         }
 
         let default_config = r##"[display]
-height = 100              # Minimap height in pixels (width is dynamic)
+height = 100              # Per-workspace row height in pixels
+                          # In "current" mode: total widget height
+                          # In "all" mode: height of one workspace row
 max_width_percent = 0.5   # Maximum width as fraction of screen (0.0 - 1.0)
+max_height_percent = 0.8  # Maximum height as fraction of screen (used in "all" mode)
 anchor = "top-right"      # Position: top-left, top-center, top-right,
                           #           bottom-left, bottom-center, bottom-right, center
 margin_x = 10             # Horizontal margin from edge
 margin_y = 10             # Vertical margin from edge
+workspace_mode = "all"    # Which workspaces to show:
+                          #   "all"     - stack every workspace vertically (Overview-style)
+                          #   "current" - show only the active workspace
 
 [appearance]
 background = "#1e1e2e"    # Background color (hex)
@@ -168,7 +207,13 @@ border_color = "#6c7086"  # Window border color
 border_width = 1          # Window border thickness
 border_radius = 2         # Corner radius for window rectangles
 gap = 2                   # Gap between windows (in minimap pixels)
-background_opacity = 0.9  # Background opacity (0.0 = transparent, 1.0 = opaque)
+background_opacity = 0.0  # Background opacity (0.0 = transparent, 1.0 = opaque)
+                          # Applies in both "current" and "all" modes
+window_opacity = 0.7      # Fill opacity for unfocused windows (0 = outlines only)
+focused_opacity = 1.0     # Fill opacity for the focused window
+workspace_gap = 4                            # Vertical gap between stacked workspaces ("all" mode)
+active_workspace_border_color = "#89b4fa"    # Highlight border for active workspace ("all" mode)
+active_workspace_border_width = 2            # Highlight border thickness ("all" mode)
 
 [behavior]
 show_on_overview = true   # Keep visible in Niri overview mode
@@ -227,9 +272,11 @@ mod tests {
         // Test display defaults
         assert_eq!(config.display.height, 100);
         assert_eq!(config.display.max_width_percent, 0.5);
+        assert_eq!(config.display.max_height_percent, 0.8);
         assert_eq!(config.display.anchor, Anchor::TopRight);
         assert_eq!(config.display.margin_x, 10);
         assert_eq!(config.display.margin_y, 10);
+        assert_eq!(config.display.workspace_mode, WorkspaceMode::All);
 
         // Test appearance defaults
         assert_eq!(config.appearance.background, "#1e1e2e");
@@ -239,7 +286,12 @@ mod tests {
         assert_eq!(config.appearance.border_width, 1.0);
         assert_eq!(config.appearance.border_radius, 2.0);
         assert_eq!(config.appearance.gap, 2.0);
-        assert_eq!(config.appearance.background_opacity, 0.9);
+        assert_eq!(config.appearance.background_opacity, 0.0);
+        assert_eq!(config.appearance.window_opacity, 0.7);
+        assert_eq!(config.appearance.focused_opacity, 1.0);
+        assert_eq!(config.appearance.workspace_gap, 4.0);
+        assert_eq!(config.appearance.active_workspace_border_color, "#89b4fa");
+        assert_eq!(config.appearance.active_workspace_border_width, 2.0);
 
         // Test behavior defaults
         assert!(config.behavior.show_on_overview);
@@ -263,6 +315,27 @@ mod tests {
         "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.display.anchor, Anchor::BottomCenter);
+    }
+
+    #[test]
+    fn test_workspace_mode_deserialization() {
+        let toml = r#"
+            [display]
+            workspace_mode = "current"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.display.workspace_mode, WorkspaceMode::Current);
+
+        let toml = r#"
+            [display]
+            workspace_mode = "all"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.display.workspace_mode, WorkspaceMode::All);
+
+        // Default should be All
+        let config = Config::default();
+        assert_eq!(config.display.workspace_mode, WorkspaceMode::All);
     }
 
     #[test]
