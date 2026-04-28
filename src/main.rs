@@ -211,6 +211,7 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
         } => {
             let window_id = window.id;
             let is_focused = window.is_focused;
+            let is_floating = window.is_floating;
             let mut is_new_window = false;
             let mut is_on_active_workspace = false;
 
@@ -240,10 +241,17 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                 }
             });
 
-            // Only show the minimap for new windows on the active workspace
+            // Only show the minimap for new windows on the active workspace.
+            // Floating spawns are filtered by show_for_new_window when the
+            // show_for_floating_windows opt-out is in effect.
             if is_on_active_workspace && is_new_window {
-                minimap.show();
-                tracing::debug!("New window {} opened (focused: {})", window_id, is_focused);
+                minimap.show_for_new_window(is_floating);
+                tracing::debug!(
+                    "New window {} opened (focused: {}, floating: {})",
+                    window_id,
+                    is_focused,
+                    is_floating
+                );
             } else {
                 tracing::debug!("Window {} updated (focused: {})", window_id, is_focused);
             }

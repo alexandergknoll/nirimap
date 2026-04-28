@@ -72,19 +72,42 @@ impl MinimapWidget {
         }
     }
 
-    /// Show the minimap only if focus changed to a different window
-    /// Returns true if the minimap was shown
+    /// Show the minimap only if focus changed to a different window.
+    /// Returns true if the minimap was shown.
+    ///
+    /// When `behavior.show_for_floating_windows` is false (the default), focus
+    /// changes involving a floating window are suppressed *and* do not advance
+    /// `last_shown_focus_id`. This means returning focus from a popup back to
+    /// the previously-focused tile won't re-trigger a show — the prior tile
+    /// is still recorded as the last shown id.
     pub fn show_on_focus_change(&self, window_id: Option<u64>) -> bool {
         let last_id = self.last_shown_focus_id.get();
 
-        // Only show if focus changed to a different window
-        if window_id != last_id {
-            self.last_shown_focus_id.set(window_id);
-            self.show();
-            true
-        } else {
-            false
+        if window_id == last_id {
+            return false;
         }
+
+        if !self.config.borrow().behavior.show_for_floating_windows {
+            let is_floating = window_id
+                .and_then(|id| self.state.borrow().find_window(id).map(|w| w.is_floating))
+                .unwrap_or(false);
+            if is_floating {
+                return false;
+            }
+        }
+
+        self.last_shown_focus_id.set(window_id);
+        self.show();
+        true
+    }
+
+    /// Show the minimap for a newly-spawned window, respecting the
+    /// `show_for_floating_windows` opt-out.
+    pub fn show_for_new_window(&self, is_floating: bool) {
+        if is_floating && !self.config.borrow().behavior.show_for_floating_windows {
+            return;
+        }
+        self.show();
     }
 
     /// Hide the minimap

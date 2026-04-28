@@ -65,6 +65,11 @@ impl MinimapState {
             .and_then(|id| self.workspaces.get(&id))
     }
 
+    /// Find a window by id across all workspaces.
+    pub fn find_window(&self, id: u64) -> Option<&Window> {
+        self.workspaces.values().find_map(|ws| ws.windows.get(&id))
+    }
+
     /// Workspaces sorted for display (by output, then idx).
     ///
     /// Workspaces without an output sort last; within the same output they
