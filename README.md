@@ -92,9 +92,14 @@ active_workspace_border_color = "#89b4fa"   # Highlight border for the active wo
 active_workspace_border_width = 2           # Highlight border thickness ("all" mode)
 
 [behavior]
-show_on_overview = true     # Keep visible in Niri overview mode (not yet implemented)
-always_visible = true       # Always show minimap (false = only on events)
-hide_timeout_ms = 2000      # Milliseconds before hiding after an event
+show_on_overview = true        # Keep visible in Niri overview mode (not yet implemented)
+always_visible = true          # Always show minimap (false = only on events)
+hide_timeout_ms = 2000         # Milliseconds before hiding after an event
+show_for_floating_windows = false # Surface the minimap for floating-window events
+                                  # (focus to/from a floating window, floating window
+                                  # spawn). Off by default — floating windows aren't
+                                  # drawn on the minimap, so popup activity would
+                                  # otherwise flash it on/off.
 ```
 
 ### Workspace Display Modes
@@ -126,6 +131,16 @@ When `always_visible = false`, the minimap will show temporarily when:
 - Window layouts change (resize, move between columns)
 
 The minimap hides automatically after `hide_timeout_ms` milliseconds.
+
+By default, the minimap stays hidden for floating-window activity:
+
+- Focus moving **to** a floating window (popup, dialog, file picker)
+- Focus returning **from** a floating window to the previously-focused tile
+- A new floating window being spawned
+
+Floating windows aren't drawn on the minimap, so this activity would
+otherwise cause a distracting on/off flash. Set
+`show_for_floating_windows = true` to restore the prior behavior.
 
 ## Known Limitations
 

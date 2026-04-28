@@ -124,6 +124,11 @@ pub struct BehaviorConfig {
     pub always_visible: bool,
     /// Milliseconds to keep minimap visible after focus change (only when always_visible is false)
     pub hide_timeout_ms: u32,
+    /// Whether floating-window events (focus, spawn) trigger the minimap to
+    /// show (only when `always_visible` is false). Floating windows aren't
+    /// rendered on the minimap, so surfacing it for transient popups, dialogs,
+    /// or returning focus from a popup is rarely useful.
+    pub show_for_floating_windows: bool,
 }
 
 impl Default for BehaviorConfig {
@@ -132,6 +137,7 @@ impl Default for BehaviorConfig {
             show_on_overview: true,
             always_visible: true,
             hide_timeout_ms: 2000,
+            show_for_floating_windows: false,
         }
     }
 }
@@ -216,9 +222,13 @@ active_workspace_border_color = "#89b4fa"    # Highlight border for active works
 active_workspace_border_width = 2            # Highlight border thickness ("all" mode)
 
 [behavior]
-show_on_overview = true   # Keep visible in Niri overview mode
-always_visible = true     # Always show minimap (false = only on focus change)
-hide_timeout_ms = 2000    # Milliseconds before hiding after focus change
+show_on_overview = true        # Keep visible in Niri overview mode
+always_visible = true          # Always show minimap (false = only on focus change)
+hide_timeout_ms = 2000         # Milliseconds before hiding after focus change
+show_for_floating_windows = false # When always_visible = false, surface the minimap for
+                                  # floating-window events (focus to/from a floating window,
+                                  # floating window spawn). Off by default since floating
+                                  # windows aren't drawn on the minimap.
 "##;
 
         std::fs::write(&config_path, default_config).with_context(|| {
@@ -297,6 +307,7 @@ mod tests {
         assert!(config.behavior.show_on_overview);
         assert!(config.behavior.always_visible);
         assert_eq!(config.behavior.hide_timeout_ms, 2000);
+        assert!(!config.behavior.show_for_floating_windows);
     }
 
     #[test]
