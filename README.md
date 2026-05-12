@@ -4,6 +4,8 @@
 
 A minimal workspace minimap overlay for the [Niri](https://github.com/YaLTeR/niri) Wayland compositor.
 
+![nirimap screenshot](assets/screenshot.png)
+
 ## Features
 
 - Displays a minimap of your workspaces showing window layout
@@ -16,6 +18,17 @@ A minimal workspace minimap overlay for the [Niri](https://github.com/YaLTeR/nir
 - Dynamic sizing based on workspace content
 
 ## Installation
+
+### Arch Linux (AUR)
+
+A community-maintained AUR package is available: [`nirimap-git`](https://aur.archlinux.org/packages/nirimap-git). It builds from the latest commit and is tracked by pacman.
+
+```bash
+# Using an AUR helper (e.g. paru, yay)
+paru -S nirimap-git
+```
+
+> **Note**: The AUR package is maintained by a community member, not by the developer of this project. Please direct packaging issues to the AUR package's maintainer.
 
 ### From source
 
