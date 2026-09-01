@@ -23,17 +23,14 @@ use ui::{create_layer_window, MinimapWidget};
 
 const APP_ID: &str = "com.github.nirimap";
 
-/// Debounce duration for config reloads in milliseconds
-/// Prevents excessive reloads when config file is modified multiple times rapidly
+/// Minimum interval between config reloads.
 const CONFIG_RELOAD_DEBOUNCE_MS: u64 = 500;
 
-/// Messages for config reload
 enum ConfigMessage {
     Reload,
 }
 
 fn main() -> Result<()> {
-    // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -43,14 +40,11 @@ fn main() -> Result<()> {
 
     tracing::info!("Starting nirimap");
 
-    // Load configuration
     let config = Config::load()?;
     tracing::info!("Loaded configuration from {:?}", Config::config_path());
 
-    // Create GTK application
     let app = gtk4::Application::builder().application_id(APP_ID).build();
 
-    // Wrap config in Rc<RefCell> for hot reload support
     let config = Rc::new(RefCell::new(config));
     let config_for_activate = config.clone();
 
@@ -60,7 +54,6 @@ fn main() -> Result<()> {
         }
     });
 
-    // Run the application
     let empty: Vec<String> = vec![];
     app.run_with_args(&empty);
 
@@ -68,22 +61,13 @@ fn main() -> Result<()> {
 }
 
 fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> {
-    // Create the layer-shell window
     let window = create_layer_window(app, &config.borrow());
-
-    // Create the minimap widget
     let minimap = MinimapWidget::new(config.clone());
-
-    // Connect the window to the minimap for dynamic resizing
     minimap.set_window(window.clone());
-
-    // Add the minimap widget to the window
     window.set_child(Some(minimap.widget()));
 
-    // Set up channel for state updates from IPC thread
     let (tx, rx) = mpsc::channel::<StateUpdate>();
 
-    // Start IPC event loop in a background thread
     thread::spawn(move || {
         if let Err(e) = ipc::run_event_loop(move |update| {
             if tx.send(update).is_err() {
@@ -94,10 +78,8 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
         }
     });
 
-    // Set up channel for config reload messages
     let (config_tx, config_rx) = mpsc::channel::<ConfigMessage>();
 
-    // Start file watcher in a background thread
     let config_path = Config::config_path();
     thread::spawn(move || {
         if let Err(e) = watch_config_file(config_path, config_tx) {
@@ -105,23 +87,20 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
         }
     });
 
-    // Set up glib idle handler to process state updates and config reloads
+    // Poll both channels from the GTK main loop.
     let minimap_clone = minimap.clone();
     let last_config_reload = Rc::new(RefCell::new(Instant::now()));
     let config_reload_debounce = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
 
     glib::timeout_add_local(Duration::from_millis(50), move || {
-        // Apply everything the IPC thread queued since the last tick
         for update in drain_state_updates(&rx) {
             apply_state_update(&minimap_clone, update);
         }
 
-        // Process config reload messages with debouncing
         while let Ok(ConfigMessage::Reload) = config_rx.try_recv() {
             let now = Instant::now();
             let mut last_reload = last_config_reload.borrow_mut();
 
-            // Only reload if enough time has passed since the last reload
             if now.duration_since(*last_reload) >= config_reload_debounce {
                 minimap_clone.reload_config();
                 *last_reload = now;
@@ -133,10 +112,9 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
         glib::ControlFlow::Continue
     });
 
-    // Show the window (present is required for layer-shell to work)
+    // present() is required for layer-shell.
     window.present();
 
-    // Hide immediately if not always visible
     if !config.borrow().behavior.always_visible {
         minimap.hide();
     }
@@ -146,7 +124,6 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
     Ok(())
 }
 
-/// Watch the config file for changes and send reload messages
 fn watch_config_file(
     config_path: std::path::PathBuf,
     tx: mpsc::Sender<ConfigMessage>,
@@ -160,7 +137,7 @@ fn watch_config_file(
         notify::Config::default(),
     )?;
 
-    // Watch the config file's parent directory (to catch file replacements)
+    // Watch the parent directory so atomic replaces (rename) are caught.
     if let Some(parent) = config_path.parent() {
         watcher.watch(parent, RecursiveMode::NonRecursive)?;
         tracing::info!("Watching config directory: {}", parent.display());
@@ -169,7 +146,6 @@ fn watch_config_file(
     for event in watcher_rx {
         match event {
             Ok(event) => {
-                // Check if the event is for our config file
                 let is_config_event = event.paths.iter().any(|p| p == &config_path);
 
                 if is_config_event {
@@ -194,14 +170,11 @@ fn watch_config_file(
     Ok(())
 }
 
-/// Drain every pending update from the IPC channel and drop the redundant ones.
+/// Drain the IPC channel and coalesce the backlog.
 ///
-/// The IPC thread can produce updates far faster than the UI consumes them:
-/// any Wayland client may change its title (or app_id) thousands of times per
-/// second, and each change arrives as a `WindowChanged` carrying a cloned
-/// `Window`. Applying a fixed number per tick would let the channel grow
-/// without bound, so the whole backlog is taken here and collapsed with
-/// [`coalesce_state_updates`] before it is applied.
+/// A client can change its title thousands of times per second, each arriving
+/// as a `WindowChanged`. Taking the whole backlog per tick keeps the channel
+/// bounded; [`coalesce_state_updates`] drops the redundant ones.
 fn drain_state_updates(rx: &mpsc::Receiver<StateUpdate>) -> Vec<StateUpdate> {
     let mut updates = Vec::new();
     while let Ok(update) = rx.try_recv() {
@@ -214,13 +187,9 @@ fn drain_state_updates(rx: &mpsc::Receiver<StateUpdate>) -> Vec<StateUpdate> {
     coalesce_state_updates(updates)
 }
 
-/// Collapse a batch of updates so that only the most recent `WindowChanged`
-/// per window survives, keeping it at its original position so ordering
-/// relative to other updates (layouts, focus, closes) is unchanged.
-///
-/// Earlier `WindowChanged` events for the same window carry state that the
-/// later one fully replaces, so dropping them changes nothing about the final
-/// state. Everything else is kept as-is.
+/// Keep only the latest `WindowChanged` per window, at its original position so
+/// ordering relative to other updates is preserved. Earlier ones are fully
+/// superseded, so dropping them doesn't change the final state.
 fn coalesce_state_updates(updates: Vec<StateUpdate>) -> Vec<StateUpdate> {
     let mut seen_windows = HashSet::new();
     let mut kept = Vec::with_capacity(updates.len());
@@ -239,7 +208,6 @@ fn coalesce_state_updates(updates: Vec<StateUpdate>) -> Vec<StateUpdate> {
     kept
 }
 
-/// Apply a state update to the minimap
 fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
     match update {
         StateUpdate::FullState(new_state) => {
@@ -260,7 +228,6 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
             let mut is_on_active_workspace = false;
 
             minimap.update_state(|state| {
-                // If this window is focused, clear focus from all other windows first
                 if is_focused {
                     state.set_focused_window(Some(window_id));
                 }
@@ -268,14 +235,13 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                 if let Some(ws_id) = workspace_id {
                     is_on_active_workspace = state.active_workspace_id == Some(ws_id);
 
-                    // Remove from any other workspace (handles workspace moves)
+                    // Handles moves between workspaces.
                     for (&id, workspace) in state.workspaces.iter_mut() {
                         if id != ws_id {
                             workspace.windows.remove(&window_id);
                         }
                     }
 
-                    // Insert into the correct workspace
                     let workspace = state
                         .workspaces
                         .entry(ws_id)
@@ -285,9 +251,7 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                 }
             });
 
-            // Only show the minimap for new windows on the active workspace.
-            // Floating spawns are filtered by show_for_new_window when the
-            // show_for_floating_windows opt-out is in effect.
+            // Only new windows on the active workspace trigger a show.
             if is_on_active_workspace && is_new_window {
                 minimap.show_for_new_window(is_floating);
                 tracing::debug!(
@@ -312,7 +276,6 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
             minimap.update_state(|state| {
                 state.set_focused_window(window_id);
             });
-            // Show the minimap only if focus changed to a different window
             minimap.show_on_focus_change(window_id);
             tracing::debug!("Focus changed to {:?}", window_id);
         }
@@ -322,7 +285,6 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                 minimap.update_state(|state| {
                     state.set_active_workspace(id);
                 });
-                // Show the minimap when workspace changes (will auto-hide if configured)
                 minimap.show();
                 tracing::debug!("Workspace {} activated", id);
             }
@@ -354,12 +316,10 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
         StateUpdate::LayoutsChanged(layouts) => {
             minimap.update_state(|state| {
                 for (window_id, layout) in layouts {
-                    // Find and update the window's layout
                     for workspace in state.workspaces.values_mut() {
                         if let Some(window) = workspace.windows.get_mut(&window_id) {
                             window.pos = layout.tile_pos_in_workspace_view;
                             window.size = layout.tile_size;
-                            // Update floating status
                             window.is_floating = layout.pos_in_scrolling_layout.is_none();
                             if let Some((col, win_idx)) = layout.pos_in_scrolling_layout {
                                 let (column_index, window_index) =
@@ -371,7 +331,6 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                     }
                 }
             });
-            // Show the minimap when layouts change (window resize, move, etc.)
             minimap.show();
             tracing::debug!("Window layouts changed");
         }
@@ -409,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_coalesce_keeps_only_latest_change_per_window() {
-        // Simulates a client spamming title changes: 1000 updates for one window
+        // A client spamming title changes.
         let updates: Vec<StateUpdate> = (0..1000)
             .map(|i| window_changed(7, &format!("title {}", i)))
             .collect();
@@ -456,40 +415,29 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert!(matches!(kept[0], StateUpdate::FullState(_)));
         assert_eq!(window_title(&kept[1]), Some("fresh"));
-        // Channel is fully drained
         assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn test_config_reload_debounce_constant() {
-        // Verify the debounce constant is set to a reasonable value
         assert_eq!(CONFIG_RELOAD_DEBOUNCE_MS, 500);
     }
 
     #[test]
     fn test_debounce_logic_simulation() {
-        // Simulate debouncing logic similar to what happens in activate()
         let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
         let mut last_reload = Instant::now();
 
-        // Wait a bit less than the debounce duration
         std::thread::sleep(Duration::from_millis(100));
         let now = Instant::now();
 
-        // Should be debounced (too soon)
         assert!(now.duration_since(last_reload) < debounce_duration);
 
-        // Wait past the debounce duration
-        std::thread::sleep(Duration::from_millis(450)); // Total: 550ms > 500ms
+        std::thread::sleep(Duration::from_millis(450)); // total 550ms > 500ms
         let now = Instant::now();
-
-        // Should not be debounced (enough time has passed)
         assert!(now.duration_since(last_reload) >= debounce_duration);
 
-        // Update last_reload
         last_reload = now;
-
-        // Immediate reload attempt should be debounced
         let now = Instant::now();
         assert!(now.duration_since(last_reload) < debounce_duration);
     }
@@ -499,11 +447,9 @@ mod tests {
         let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
         let last_reload = Instant::now();
 
-        // Sleep for exactly the debounce duration
         std::thread::sleep(debounce_duration);
         let now = Instant::now();
 
-        // Should be >= debounce duration (edge case: exactly at boundary)
         assert!(now.duration_since(last_reload) >= debounce_duration);
     }
 
@@ -513,7 +459,7 @@ mod tests {
         let mut last_reload = Instant::now();
         let mut reload_count = 0;
 
-        // Simulate 10 rapid events over 200ms (all within debounce window)
+        // 10 events over 200ms, all inside the debounce window
         for _ in 0..10 {
             std::thread::sleep(Duration::from_millis(20));
             let now = Instant::now();
@@ -524,18 +470,15 @@ mod tests {
             }
         }
 
-        // Only the first event should trigger a reload (200ms total < 500ms)
         assert_eq!(reload_count, 0);
 
-        // Now wait long enough for the debounce to expire
-        std::thread::sleep(Duration::from_millis(350)); // Total: 550ms > 500ms
+        std::thread::sleep(Duration::from_millis(350)); // total 550ms > 500ms
         let now = Instant::now();
 
         if now.duration_since(last_reload) >= debounce_duration {
             reload_count += 1;
         }
 
-        // Now we should get a reload
         assert_eq!(reload_count, 1);
     }
 }

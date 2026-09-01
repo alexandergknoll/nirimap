@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::PathBuf;
 
-/// Anchor position for the minimap on screen
+/// Minimap placement on screen, and label/icon placement within rectangle
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Anchor {
@@ -27,7 +27,6 @@ pub enum WorkspaceMode {
     All,
 }
 
-/// Display configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
@@ -38,13 +37,11 @@ pub struct DisplayConfig {
     pub max_width_percent: f64,
     /// Maximum height as percentage of screen height (0.0 - 1.0), used in `all` mode
     pub max_height_percent: f64,
-    /// Position anchor
     pub anchor: Anchor,
     /// Horizontal margin from edge
     pub margin_x: i32,
     /// Vertical margin from edge
     pub margin_y: i32,
-    /// Which workspaces to display
     pub workspace_mode: WorkspaceMode,
 }
 
@@ -62,7 +59,6 @@ impl Default for DisplayConfig {
     }
 }
 
-/// Appearance configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AppearanceConfig {
@@ -129,7 +125,6 @@ pub enum LabelContent {
     None,
 }
 
-/// Font weight for labels
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum FontWeight {
@@ -138,7 +133,6 @@ pub enum FontWeight {
     Bold,
 }
 
-/// Font style for labels
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum FontStyle {
@@ -188,13 +182,10 @@ pub struct LabelConfig {
     pub enabled: bool,
     /// What the label shows
     pub content: LabelContent,
-    /// Font family name
     pub font_family: String,
     /// Font size in pixels
     pub font_size: f64,
-    /// Font weight
     pub font_weight: FontWeight,
-    /// Font style
     pub font_style: FontStyle,
     /// Text color (hex)
     pub color: String,
@@ -260,7 +251,6 @@ impl Default for IconConfig {
     }
 }
 
-/// Behavior configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct BehaviorConfig {
@@ -268,12 +258,10 @@ pub struct BehaviorConfig {
     pub show_on_overview: bool,
     /// Always show the minimap (if false, only shows on focus change)
     pub always_visible: bool,
-    /// Milliseconds to keep minimap visible after focus change (only when always_visible is false)
+    /// How long to stay visible after a show, when `always_visible` is false
     pub hide_timeout_ms: u32,
-    /// Whether floating-window events (focus, spawn) trigger the minimap to
-    /// show (only when `always_visible` is false). Floating windows aren't
-    /// rendered on the minimap, so surfacing it for transient popups, dialogs,
-    /// or returning focus from a popup is rarely useful.
+    /// Whether floating-window focus/spawn events show the minimap (when not
+    /// `always_visible`). Floating windows aren't drawn, so this is off by default.
     pub show_for_floating_windows: bool,
 }
 
@@ -288,7 +276,6 @@ impl Default for BehaviorConfig {
     }
 }
 
-/// Main configuration struct
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -300,7 +287,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Load configuration from the default path or create default config
+    /// Load the config file, writing the default one first if it doesn't exist.
     pub fn load() -> Result<Self> {
         let config_path = Self::config_path();
 
@@ -315,14 +302,12 @@ impl Config {
 
             Ok(config)
         } else {
-            // Create default config file
             let config = Config::default();
             config.save_default()?;
             Ok(config)
         }
     }
 
-    /// Get the configuration file path
     pub fn config_path() -> PathBuf {
         dirs::config_dir()
             .expect("Failed to determine config directory. Please set XDG_CONFIG_HOME or HOME environment variable.")
@@ -330,7 +315,6 @@ impl Config {
             .join("config.toml")
     }
 
-    /// Save default configuration to disk
     fn save_default(&self) -> Result<()> {
         let config_path = Self::config_path();
         if let Some(parent) = config_path.parent() {
@@ -413,7 +397,6 @@ show_for_floating_windows = false # When always_visible = false, surface the min
                                   # windows aren't drawn on the minimap.
 "##;
 
-/// RGBA color representation
 #[derive(Debug, Clone, Copy)]
 pub struct Color {
     pub r: f64,
@@ -423,7 +406,7 @@ pub struct Color {
 }
 
 impl Color {
-    /// Parse a hex color string (e.g., "#1e1e2e" or "1e1e2e")
+    /// Parse `#rrggbb` (the `#` is optional).
     pub fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.trim_start_matches('#');
 
@@ -452,7 +435,6 @@ mod tests {
     fn test_default_config_values() {
         let config = Config::default();
 
-        // Test display defaults
         assert_eq!(config.display.height, 100);
         assert_eq!(config.display.max_width_percent, 0.5);
         assert_eq!(config.display.max_height_percent, 0.8);
@@ -461,7 +443,6 @@ mod tests {
         assert_eq!(config.display.margin_y, 10);
         assert_eq!(config.display.workspace_mode, WorkspaceMode::All);
 
-        // Test appearance defaults
         assert_eq!(config.appearance.background, "#1e1e2e");
         assert_eq!(config.appearance.window_color, "#45475a");
         assert_eq!(config.appearance.focused_color, "#89b4fa");
@@ -476,7 +457,6 @@ mod tests {
         assert_eq!(config.appearance.active_workspace_border_color, "#89b4fa");
         assert_eq!(config.appearance.active_workspace_border_width, 2.0);
 
-        // Test label defaults
         assert!(!config.labels.enabled);
         assert_eq!(config.labels.content, LabelContent::Title);
         assert_eq!(config.labels.font_family, "Sans");
@@ -490,7 +470,6 @@ mod tests {
         assert_eq!(config.labels.min_window_size, 30.0);
         assert!(!config.labels.shadow);
 
-        // Test icon defaults
         assert!(config.icons.enabled);
         assert_eq!(config.icons.size, IconSize::Auto);
         assert_eq!(config.icons.position, Anchor::Center);
@@ -498,7 +477,6 @@ mod tests {
         assert_eq!(config.icons.theme_override, None);
         assert_eq!(config.icons.min_window_size, 16.0);
 
-        // Test behavior defaults
         assert!(config.behavior.show_on_overview);
         assert!(config.behavior.always_visible);
         assert_eq!(config.behavior.hide_timeout_ms, 2000);
@@ -581,8 +559,7 @@ mod tests {
 
     #[test]
     fn test_default_config_toml_matches_defaults() {
-        // The default config file we write on first run must parse and agree
-        // with the in-code defaults.
+        // The file written on first run must agree with the in-code defaults.
         let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         let defaults = Config::default();
 
@@ -607,7 +584,6 @@ mod tests {
 
     #[test]
     fn test_anchor_deserialization() {
-        // Test that anchor positions are correctly deserialized from TOML
         let toml = r#"
             [display]
             anchor = "top-left"
@@ -639,21 +615,18 @@ mod tests {
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.display.workspace_mode, WorkspaceMode::All);
 
-        // Default should be All
         let config = Config::default();
         assert_eq!(config.display.workspace_mode, WorkspaceMode::All);
     }
 
     #[test]
     fn test_partial_config_override() {
-        // Test that partial config can be deserialized (uses defaults for missing fields)
         let toml = r#"
             [display]
             height = 150
         "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.display.height, 150);
-        // Other fields should use defaults
         assert_eq!(config.display.max_width_percent, 0.5);
         assert_eq!(config.appearance.background, "#1e1e2e");
     }
@@ -678,11 +651,8 @@ mod tests {
 
     #[test]
     fn test_color_from_hex_invalid_length() {
-        // Too short
         assert!(Color::from_hex("#fff").is_none());
-        // Too long
         assert!(Color::from_hex("#1e1e2e00").is_none());
-        // Empty
         assert!(Color::from_hex("").is_none());
     }
 
@@ -695,13 +665,11 @@ mod tests {
 
     #[test]
     fn test_color_from_hex_edge_cases() {
-        // Black
         let black = Color::from_hex("#000000").unwrap();
         assert_eq!(black.r, 0.0);
         assert_eq!(black.g, 0.0);
         assert_eq!(black.b, 0.0);
 
-        // White
         let white = Color::from_hex("#ffffff").unwrap();
         assert_eq!(white.r, 1.0);
         assert_eq!(white.g, 1.0);
@@ -710,7 +678,6 @@ mod tests {
 
     #[test]
     fn test_color_alpha_is_always_one() {
-        // Verify that alpha is always 1.0 regardless of input
         let color1 = Color::from_hex("#123456").unwrap();
         assert_eq!(color1.a, 1.0);
 

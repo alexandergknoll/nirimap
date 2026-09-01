@@ -1,69 +1,51 @@
 use std::collections::HashMap;
 
-/// Represents a single window in the minimap
 #[derive(Debug, Clone)]
 pub struct Window {
-    /// Unique window identifier from Niri
     pub id: u64,
-    /// Position in workspace view coordinates (x, y), if known. Niri only
-    /// populates `tile_pos_in_workspace_view` for windows whose tile is
-    /// currently positioned in the viewport; off-viewport windows arrive as
-    /// `None`. Don't treat `None` as `(0, 0)` — that destroys the distinction.
+    /// Position in workspace-view coordinates. Niri only reports this for tiles
+    /// currently in the viewport, so `None` must not be treated as `(0, 0)`.
     pub pos: Option<(f64, f64)>,
-    /// Window tile size (width, height)
+    /// Tile size (width, height)
     pub size: (f64, f64),
     /// Column index in the scrolling layout
     pub column_index: usize,
     /// Window index within the column
     pub window_index: usize,
-    /// Whether this window is currently focused
     pub is_focused: bool,
-    /// Whether this window is floating (not tiled)
     pub is_floating: bool,
-    /// Window title, if set
     pub title: Option<String>,
-    /// Application ID (Wayland app-id), if set
     pub app_id: Option<String>,
 }
 
-/// Represents a workspace containing windows
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
     /// Niri workspace id (stable across moves/reorder)
     pub id: u64,
-    /// Index of the workspace on its monitor (display order)
+    /// Index on its output (display order)
     pub idx: u8,
-    /// Name of the output this workspace is on, if any
     pub output: Option<String>,
-    /// Windows in this workspace, keyed by window ID
     pub windows: HashMap<u64, Window>,
-    /// Whether this workspace is currently active
     pub is_active: bool,
-    /// The most-recently-focused window id on this workspace, if any. Niri
-    /// tracks this per workspace and uses it for Overview-style alignment.
+    /// Most-recently-focused window on this workspace; Niri uses it for
+    /// Overview-style alignment.
     pub active_window_id: Option<u64>,
 }
 
 impl Workspace {}
 
-/// Main state container for the minimap
 #[derive(Debug, Clone, Default)]
 pub struct MinimapState {
-    /// All workspaces, keyed by workspace ID
     pub workspaces: HashMap<u64, Workspace>,
-    /// Currently active workspace ID
     pub active_workspace_id: Option<u64>,
-    /// Currently focused window ID
     pub focused_window_id: Option<u64>,
 }
 
 impl MinimapState {
-    /// Create a new empty state
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Get the currently active workspace, if any
     pub fn active_workspace(&self) -> Option<&Workspace> {
         self.active_workspace_id
             .and_then(|id| self.workspaces.get(&id))
@@ -74,10 +56,7 @@ impl MinimapState {
         self.workspaces.values().find_map(|ws| ws.windows.get(&id))
     }
 
-    /// Workspaces sorted for display (by output, then idx).
-    ///
-    /// Workspaces without an output sort last; within the same output they
-    /// are ordered by `idx` ascending.
+    /// Workspaces sorted by output (`None` last), then `idx`.
     pub fn workspaces_sorted(&self) -> Vec<&Workspace> {
         let mut out: Vec<&Workspace> = self.workspaces.values().collect();
         out.sort_by(|a, b| {
@@ -91,15 +70,10 @@ impl MinimapState {
         out
     }
 
-    /// Replace workspace metadata from a fresh snapshot, preserving existing
-    /// window data for workspaces that still exist.
-    ///
-    /// - Removes workspaces not in `incoming` (their windows are dropped too).
-    /// - Updates `idx`, `output`, `is_active` on existing workspaces.
-    /// - Inserts new workspaces as empty.
-    /// - Updates `active_workspace_id` to the incoming `is_focused` workspace.
-    ///   If none is focused, keeps the previous value when that workspace
-    ///   still exists, otherwise leaves it as `None`.
+    /// Sync workspace metadata from a fresh snapshot, keeping the windows of
+    /// workspaces that still exist. Missing workspaces are dropped and new ones
+    /// inserted empty. `active_workspace_id` follows the focused workspace,
+    /// falling back to the previous value if that workspace still exists.
     pub fn replace_workspace_metadata(&mut self, incoming: &[niri_ipc::Workspace]) {
         use std::collections::HashSet;
 
@@ -118,13 +92,11 @@ impl MinimapState {
             entry.active_window_id = ws.active_window_id;
         }
 
-        // Track the globally focused workspace (there is at most one).
         self.active_workspace_id = incoming.iter().find(|w| w.is_focused).map(|w| w.id).or(self
             .active_workspace_id
             .filter(|id| incoming_ids.contains(id)));
     }
 
-    /// Update or insert a window in the appropriate workspace
     pub fn upsert_window(&mut self, workspace_id: u64, window: Window) {
         let workspace = self
             .workspaces
@@ -136,16 +108,15 @@ impl MinimapState {
         workspace.windows.insert(window.id, window);
     }
 
-    /// Remove a window by ID from all workspaces
+    /// Remove a window from every workspace.
     pub fn remove_window(&mut self, window_id: u64) {
         for workspace in self.workspaces.values_mut() {
             workspace.windows.remove(&window_id);
         }
     }
 
-    /// Set the focused window ID and update focus state
+    /// Move focus to `window_id`, updating `is_focused` flags.
     pub fn set_focused_window(&mut self, window_id: Option<u64>) {
-        // Clear old focus
         if let Some(old_id) = self.focused_window_id {
             for workspace in self.workspaces.values_mut() {
                 if let Some(window) = workspace.windows.get_mut(&old_id) {
@@ -154,7 +125,6 @@ impl MinimapState {
             }
         }
 
-        // Set new focus
         self.focused_window_id = window_id;
         if let Some(new_id) = window_id {
             for workspace in self.workspaces.values_mut() {
@@ -165,17 +135,14 @@ impl MinimapState {
         }
     }
 
-    /// Set the active workspace
     pub fn set_active_workspace(&mut self, workspace_id: u64) {
-        // Clear old active state
         for workspace in self.workspaces.values_mut() {
             workspace.is_active = false;
         }
 
-        // Set new active state
         self.active_workspace_id = Some(workspace_id);
 
-        // Ensure the workspace exists (create if necessary for dynamically created workspaces)
+        // The workspace may not be known yet (dynamically created).
         let workspace = self
             .workspaces
             .entry(workspace_id)
@@ -229,7 +196,6 @@ mod tests {
         let window1 = create_test_window(1, 0.0, 0.0, 100.0, 200.0);
         state.upsert_window(1, window1);
 
-        // Update the same window
         let window2 = create_test_window(1, 50.0, 50.0, 150.0, 250.0);
         state.upsert_window(1, window2);
 
@@ -265,7 +231,6 @@ mod tests {
 
         state.remove_window(1);
 
-        // Window should be removed from both workspaces
         assert!(!state.workspaces.get(&1).unwrap().windows.contains_key(&1));
         assert!(!state.workspaces.get(&2).unwrap().windows.contains_key(&1));
     }
@@ -280,7 +245,6 @@ mod tests {
         state.upsert_window(1, window2);
         state.focused_window_id = Some(1);
 
-        // Change focus to window 2
         state.set_focused_window(Some(2));
 
         assert_eq!(state.focused_window_id, Some(2));
@@ -297,7 +261,6 @@ mod tests {
         state.upsert_window(1, window1);
         state.focused_window_id = Some(1);
 
-        // Clear focus
         state.set_focused_window(None);
 
         assert_eq!(state.focused_window_id, None);
@@ -314,7 +277,6 @@ mod tests {
         state.workspaces.get_mut(&1).unwrap().is_active = true;
         state.active_workspace_id = Some(1);
 
-        // Change active workspace
         state.set_active_workspace(2);
 
         assert_eq!(state.active_workspace_id, Some(2));
@@ -382,10 +344,8 @@ mod tests {
         let window = create_test_window(1, 0.0, 0.0, 100.0, 200.0);
         state.upsert_window(1, window);
 
-        // Initial: workspace 1 exists with a window
         assert_eq!(state.workspaces.get(&1).unwrap().windows.len(), 1);
 
-        // Metadata arrives claiming workspace 1 on DP-1, idx=0, focused
         let incoming = vec![ipc_workspace(1, 0, Some("DP-1"), true, true)];
         state.replace_workspace_metadata(&incoming);
 
@@ -393,7 +353,6 @@ mod tests {
         assert_eq!(ws.idx, 0);
         assert_eq!(ws.output.as_deref(), Some("DP-1"));
         assert!(ws.is_active);
-        // Windows preserved
         assert_eq!(ws.windows.len(), 1);
         assert_eq!(state.active_workspace_id, Some(1));
     }
@@ -405,13 +364,11 @@ mod tests {
         state.upsert_window(2, create_test_window(20, 0.0, 0.0, 100.0, 200.0));
         state.active_workspace_id = Some(2);
 
-        // Only workspace 1 survives
         let incoming = vec![ipc_workspace(1, 0, None, true, true)];
         state.replace_workspace_metadata(&incoming);
 
         assert!(state.workspaces.contains_key(&1));
         assert!(!state.workspaces.contains_key(&2));
-        // Active workspace updated to the focused one
         assert_eq!(state.active_workspace_id, Some(1));
     }
 

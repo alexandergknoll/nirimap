@@ -2,15 +2,13 @@ use anyhow::{Context, Result};
 use niri_ipc::socket::Socket;
 use niri_ipc::{Reply, Request, Response};
 
-/// Client for communicating with Niri via IPC
+/// Request/response client for the Niri IPC socket.
 pub struct NiriClient {
     socket: Socket,
 }
 
 impl NiriClient {
-    /// Create a new client connected to the Niri socket
     pub fn connect() -> Result<Self> {
-        // Validate socket path before connecting
         let socket_path =
             std::env::var("NIRI_SOCKET").context("NIRI_SOCKET environment variable not set")?;
         super::events::validate_socket_path(&socket_path)?;
@@ -20,7 +18,6 @@ impl NiriClient {
         Ok(Self { socket })
     }
 
-    /// Query all windows
     pub fn get_windows(&mut self) -> Result<Vec<niri_ipc::Window>> {
         let reply = self.send(Request::Windows)?;
         match reply {
@@ -29,7 +26,6 @@ impl NiriClient {
         }
     }
 
-    /// Query all workspaces
     pub fn get_workspaces(&mut self) -> Result<Vec<niri_ipc::Workspace>> {
         let reply = self.send(Request::Workspaces)?;
         match reply {
@@ -38,7 +34,6 @@ impl NiriClient {
         }
     }
 
-    /// Send a request and get a response
     fn send(&mut self, request: Request) -> Result<Response> {
         let reply: Reply = self
             .socket

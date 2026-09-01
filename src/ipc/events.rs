@@ -5,66 +5,58 @@ use std::os::unix::net::UnixStream;
 
 use crate::state::{MinimapState, Window, Workspace};
 
-/// State update messages sent to the UI
+/// Updates sent from the IPC thread to the UI.
 #[derive(Debug, Clone)]
 pub enum StateUpdate {
-    /// Full state refresh
     FullState(MinimapState),
-    /// A window was opened or changed
     WindowChanged {
         window: Window,
         workspace_id: Option<u64>,
     },
-    /// A window was closed
     WindowClosed(u64),
-    /// Window focus changed
     FocusChanged(Option<u64>),
-    /// Active workspace changed
-    WorkspaceActivated { id: u64, focused: bool },
-    /// Window layouts changed
+    WorkspaceActivated {
+        id: u64,
+        focused: bool,
+    },
     LayoutsChanged(Vec<(u64, niri_ipc::WindowLayout)>),
-    /// Workspace configuration changed (add/remove/reorder)
+    /// Workspaces added, removed, or reordered
     WorkspacesChanged(Vec<niri_ipc::Workspace>),
-    /// The active window on some workspace changed
     WorkspaceActiveWindowChanged {
         workspace_id: u64,
         active_window_id: Option<u64>,
     },
 }
 
-/// Run the event loop, sending state updates to the provided sender
+/// Fetch the initial state, then forward Niri events to `on_update` until the
+/// stream ends.
 pub fn run_event_loop<F>(mut on_update: F) -> Result<()>
 where
     F: FnMut(StateUpdate) + Send,
 {
-    // First, get initial state
     let initial_state = fetch_initial_state()?;
     on_update(StateUpdate::FullState(initial_state));
 
-    // Then subscribe to event stream
     let reader = connect_event_stream()?;
 
     for line in reader.lines() {
         let line = line.context("Failed to read from event stream")?;
 
-        // Skip empty lines
         if line.trim().is_empty() {
             continue;
         }
 
-        // Parse the event, skipping unrecognized events for forward compatibility
+        // Unknown events are skipped for forward compatibility.
         let event: Event = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(err) => {
-                // The payload can contain window titles, so keep it out of the
-                // default log level and only show a bounded prefix when asked.
+                // Payloads may contain window titles; only log a bounded prefix at debug.
                 tracing::warn!("Skipping unrecognized event: {}", err);
                 tracing::debug!("Unrecognized event payload: {}", truncate_chars(&line, 200));
                 continue;
             }
         };
 
-        // Convert to state update
         if let Some(update) = event_to_update(event) {
             on_update(update);
         }
@@ -73,7 +65,6 @@ where
     Ok(())
 }
 
-/// Fetch the initial complete state from Niri
 fn fetch_initial_state() -> Result<MinimapState> {
     let mut client = super::client::NiriClient::connect()?;
 
@@ -82,7 +73,6 @@ fn fetch_initial_state() -> Result<MinimapState> {
 
     let mut state = MinimapState::new();
 
-    // Process workspaces
     for ws in workspaces {
         let workspace = Workspace {
             id: ws.id,
@@ -99,7 +89,6 @@ fn fetch_initial_state() -> Result<MinimapState> {
         }
     }
 
-    // Process windows
     for win in windows {
         if let Some(workspace_id) = win.workspace_id {
             let window = niri_window_to_model(&win);
@@ -114,9 +103,7 @@ fn fetch_initial_state() -> Result<MinimapState> {
     Ok(state)
 }
 
-/// Truncate `s` to at most `max_chars` characters without splitting a UTF-8
-/// sequence. (Slicing by byte index panics mid-character, and event payloads
-/// carry arbitrary window titles.)
+/// Truncate to `max_chars` characters without splitting a UTF-8 sequence.
 fn truncate_chars(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         Some((byte_idx, _)) => &s[..byte_idx],
@@ -124,19 +111,16 @@ fn truncate_chars(s: &str, max_chars: usize) -> &str {
     }
 }
 
-/// Validate the socket path for security
+/// Reject relative socket paths; warn on unexpected locations.
 pub(super) fn validate_socket_path(socket_path: &str) -> Result<()> {
     use std::path::Path;
 
     let path = Path::new(socket_path);
 
-    // Ensure the path is absolute (prevents relative path attacks)
     if !path.is_absolute() {
         anyhow::bail!("NIRI_SOCKET must be an absolute path, got: {}", socket_path);
     }
 
-    // Check if the path is in expected locations for security
-    // Typically: /run/user/<uid>/ or /tmp/
     let path_str = socket_path;
     let is_expected_location = path_str.starts_with("/run/user/") || path_str.starts_with("/tmp/");
 
@@ -150,18 +134,16 @@ pub(super) fn validate_socket_path(socket_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Connect to the event stream
+/// Open the Niri socket and subscribe to the event stream.
 fn connect_event_stream() -> Result<BufReader<UnixStream>> {
     let socket_path = std::env::var("NIRI_SOCKET")
         .context("NIRI_SOCKET environment variable not set. Is Niri running?")?;
 
-    // Validate the socket path for security
     validate_socket_path(&socket_path)?;
 
     let stream = UnixStream::connect(&socket_path)
         .with_context(|| format!("Failed to connect to Niri socket at {}", socket_path))?;
 
-    // Send the EventStream request
     let request = serde_json::to_string(&Request::EventStream)?;
     use std::io::Write;
     let mut writer = &stream;
@@ -169,13 +151,12 @@ fn connect_event_stream() -> Result<BufReader<UnixStream>> {
 
     let mut reader = BufReader::new(stream);
 
-    // Read and discard the initial reply ({"Ok":"Handled"})
+    // The first line is the request reply ({"Ok":"Handled"}), not an event.
     let mut reply_line = String::new();
     reader
         .read_line(&mut reply_line)
         .context("Failed to read EventStream reply")?;
 
-    // Verify it was successful
     let reply: Result<niri_ipc::Response, String> =
         serde_json::from_str(&reply_line).context("Failed to parse EventStream reply")?;
 
@@ -188,10 +169,8 @@ fn connect_event_stream() -> Result<BufReader<UnixStream>> {
     Ok(reader)
 }
 
-/// Validate and convert 1-based indices from Niri to 0-based indices
-/// Returns (column_index, window_index) as 0-based values
+/// Convert Niri's 1-based (column, window) indices to 0-based, warning on 0.
 pub fn validate_and_convert_indices(col: usize, win_idx: usize, window_id: u64) -> (usize, usize) {
-    // Validate indices are >= 1 (Niri uses 1-based indexing)
     if col == 0 {
         tracing::warn!(
             "Invalid column index 0 received from Niri for window {}",
@@ -205,11 +184,9 @@ pub fn validate_and_convert_indices(col: usize, win_idx: usize, window_id: u64) 
         );
     }
 
-    // Convert from 1-based to 0-based, saturating at 0 for invalid inputs
     (col.saturating_sub(1), win_idx.saturating_sub(1))
 }
 
-/// Convert a Niri event to a state update
 fn event_to_update(event: Event) -> Option<StateUpdate> {
     match event {
         Event::WindowOpenedOrChanged { window } => {
@@ -234,19 +211,16 @@ fn event_to_update(event: Event) -> Option<StateUpdate> {
             workspace_id,
             active_window_id,
         }),
-        // Ignore other events for now
         _ => None,
     }
 }
 
-/// Convert a niri-ipc Window to our model Window
 fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
     let layout = &win.layout;
 
-    // Floating windows have pos_in_scrolling_layout = None
+    // Floating windows have no scrolling-layout position.
     let is_floating = layout.pos_in_scrolling_layout.is_none();
 
-    // Extract position in scrolling layout (column, window_in_column)
     let (column_index, window_index) = layout
         .pos_in_scrolling_layout
         .map(|(c, w)| validate_and_convert_indices(c, w, win.id))
@@ -296,7 +270,6 @@ mod tests {
 
     #[test]
     fn test_validate_socket_path_valid_absolute_paths() {
-        // Valid absolute paths should succeed
         assert!(validate_socket_path("/run/user/1000/niri.sock").is_ok());
         assert!(validate_socket_path("/tmp/niri.sock").is_ok());
         assert!(validate_socket_path("/run/user/12345/niri-wayland.sock").is_ok());
@@ -304,7 +277,6 @@ mod tests {
 
     #[test]
     fn test_validate_socket_path_rejects_relative_paths() {
-        // Relative paths should be rejected
         assert!(validate_socket_path("./niri.sock").is_err());
         assert!(validate_socket_path("../niri.sock").is_err());
         assert!(validate_socket_path("niri.sock").is_err());
@@ -312,21 +284,18 @@ mod tests {
 
     #[test]
     fn test_validate_socket_path_empty() {
-        // Empty path should be rejected
         assert!(validate_socket_path("").is_err());
     }
 
     #[test]
     fn test_validate_socket_path_unexpected_location() {
-        // Unexpected locations should succeed but log a warning
-        // (we can't test the warning without complex tracing setup)
+        // Unexpected locations only warn.
         assert!(validate_socket_path("/home/user/niri.sock").is_ok());
         assert!(validate_socket_path("/var/niri.sock").is_ok());
     }
 
     #[test]
     fn test_validate_and_convert_indices_normal_conversion() {
-        // Normal 1-based to 0-based conversion
         assert_eq!(validate_and_convert_indices(1, 1, 100), (0, 0));
         assert_eq!(validate_and_convert_indices(2, 1, 100), (1, 0));
         assert_eq!(validate_and_convert_indices(1, 2, 100), (0, 1));
@@ -335,7 +304,6 @@ mod tests {
 
     #[test]
     fn test_validate_and_convert_indices_zero_handling() {
-        // Zero values should saturate to 0 (invalid input)
         assert_eq!(validate_and_convert_indices(0, 1, 100), (0, 0));
         assert_eq!(validate_and_convert_indices(1, 0, 100), (0, 0));
         assert_eq!(validate_and_convert_indices(0, 0, 100), (0, 0));
@@ -343,7 +311,6 @@ mod tests {
 
     #[test]
     fn test_validate_and_convert_indices_max_value() {
-        // usize::MAX should saturate correctly
         assert_eq!(
             validate_and_convert_indices(usize::MAX, 1, 100),
             (usize::MAX - 1, 0)
@@ -360,7 +327,6 @@ mod tests {
 
     #[test]
     fn test_validate_and_convert_indices_large_values() {
-        // Large values should convert correctly
         assert_eq!(validate_and_convert_indices(1000, 500, 100), (999, 499));
         assert_eq!(
             validate_and_convert_indices(999999, 123456, 100),

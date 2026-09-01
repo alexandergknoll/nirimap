@@ -17,25 +17,20 @@ use crate::state::Window;
 /// Inset from the window edge for icons anchored at a corner/edge.
 const ICON_EDGE_INSET: f64 = 2.0;
 
-/// Upper bound on cached icon resolutions. Cache keys include the
-/// client-controlled `app_id`, so without a cap a client that keeps changing
-/// its app_id could grow the cache (and trigger a theme lookup per change)
-/// without limit. When the cap is hit the cache is flushed; re-resolving a
-/// few hundred icons is cheap.
+/// Cap on cached icon lookups. Keys include the client-controlled `app_id`, so
+/// a client cycling its app_id could otherwise grow the cache without bound.
+/// On overflow the cache is flushed; re-resolving is cheap.
 const ICON_CACHE_MAX_ENTRIES: usize = 512;
 
-/// Longest `app_id` we attempt to resolve. Real desktop entry ids and icon
-/// names are far shorter; anything longer is not worth a lookup or a cache slot.
+/// Longest `app_id` worth resolving; real ids are far shorter.
 const MAX_APP_ID_LEN: usize = 255;
 
-/// Horizontal placement derived from an anchor.
 enum HAlign {
     Left,
     Center,
     Right,
 }
 
-/// Vertical placement derived from an anchor.
 enum VAlign {
     Top,
     Center,
@@ -90,8 +85,7 @@ pub fn draw_window_decorations(
 // Labels
 // ---------------------------------------------------------------------------
 
-/// Resolve the label text for a window, falling back to whichever of
-/// title/app_id is available.
+/// Label text, falling back to whichever of title/app_id is available.
 fn label_text(content: LabelContent, window: &Window) -> Option<String> {
     let title = window.title.as_deref().filter(|s| !s.is_empty());
     let app_id = window.app_id.as_deref().filter(|s| !s.is_empty());
@@ -257,7 +251,6 @@ fn draw_window_icon(
     cr.restore().ok();
 }
 
-/// Render a paintable into the cairo context at the given position and size.
 fn draw_paintable(
     cr: &Context,
     paintable: &gdk::Paintable,
@@ -322,16 +315,15 @@ fn draw_letter_fallback(cr: &Context, app_id: &str, x: f64, y: f64, size: f64, o
 /// Cache key: app_id + requested pixel size + display scale.
 type IconKey = (String, i32, i32);
 
-/// Caches resolved icon paintables and the desktop-file fallback index so
-/// theme/filesystem lookups don't happen on every frame.
+/// Caches resolved icons and the desktop-file index so lookups don't run
+/// every frame.
 #[derive(Default)]
 pub struct IconCache {
-    /// Resolved paintables (None = resolution failed; letter fallback is used).
+    /// `None` = resolution failed; the letter fallback is drawn instead.
     icons: HashMap<IconKey, Option<gdk::Paintable>>,
-    /// Lazily-built map from lowercased StartupWMClass / desktop-file stem to
-    /// the desktop entry's Icon value.
+    /// Lazily built: lowercased StartupWMClass / desktop-file stem -> Icon.
     desktop_icon_map: Option<HashMap<String, String>>,
-    /// Icon theme, cached together with the override name it was built for.
+    /// Icon theme and the override name it was built for.
     theme: Option<(Option<String>, IconTheme)>,
 }
 
@@ -340,19 +332,15 @@ impl IconCache {
         Self::default()
     }
 
-    /// Drop all cached data. Called on config reload so a changed
-    /// `theme_override` (or newly-installed icons) takes effect.
+    /// Called on config reload so `theme_override` changes take effect.
     pub fn clear(&mut self) {
         self.icons.clear();
         self.desktop_icon_map = None;
         self.theme = None;
     }
 
-    /// Resolve the icon paintable for an app_id, or None if nothing was found
-    /// (the caller then draws a letter fallback).
-    ///
-    /// Resolution order: the app_id (and its lowercase form) as a themed icon
-    /// name, then a desktop-file lookup via StartupWMClass / desktop-file id.
+    /// Icon for `app_id`, or `None` (the caller draws a letter fallback). Tries
+    /// the app_id as a themed icon name, then the desktop-file index.
     pub fn lookup(
         &mut self,
         app_id: &str,
@@ -390,9 +378,8 @@ impl IconCache {
 
         let lowercase = app_id.to_lowercase();
 
-        // Only hand the app_id to the icon theme if it looks like an icon
-        // name. The desktop-file fallback below is a plain map lookup, so it
-        // stays available for unusual app_ids (e.g. ones containing spaces).
+        // Only forward icon-name-shaped app_ids to the theme; the desktop-file
+        // map below still handles the rest (e.g. app_ids with spaces).
         if is_plain_icon_name(app_id) {
             for name in [app_id, lowercase.as_str()] {
                 if theme.has_icon(name) {
@@ -401,9 +388,7 @@ impl IconCache {
             }
         }
 
-        // Fall back to desktop files: match StartupWMClass or the desktop
-        // file's own id against the app_id (how launchers resolve e.g.
-        // Electron apps whose app_id doesn't match an icon name).
+        // Desktop-file fallback (how launchers resolve e.g. Electron apps).
         let icon_name = self
             .desktop_icon_map
             .get_or_insert_with(build_desktop_icon_map)
@@ -436,7 +421,7 @@ impl IconCache {
             .upcast()
     }
 
-    /// Get (building if necessary) the icon theme for the given override.
+    /// Icon theme for `theme_override`, rebuilt when the override changes.
     fn theme(&mut self, theme_override: Option<&str>) -> Option<&IconTheme> {
         let wanted = theme_override.map(str::to_string);
         let stale = match &self.theme {
@@ -460,12 +445,9 @@ impl IconCache {
     }
 }
 
-/// Whether `name` is safe to pass to the icon theme as an icon name.
-///
-/// Icon names and desktop entry ids are built from `[A-Za-z0-9._-]`. The
-/// app_id is set by an arbitrary Wayland client, so path separators,
-/// whitespace, and control characters are rejected rather than forwarded to
-/// GTK's lookup machinery.
+/// Whether `name` is safe to hand to the icon theme: `[A-Za-z0-9._-]` only.
+/// app_id is client-controlled, so paths, whitespace, and control characters
+/// are rejected.
 fn is_plain_icon_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= MAX_APP_ID_LEN
@@ -499,9 +481,8 @@ fn xdg_data_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Scan XDG application directories and index desktop entries by lowercased
-/// StartupWMClass and desktop-file stem, mapping to the entry's Icon value.
-/// Earlier directories (user-local) win over later (system) ones.
+/// Index desktop entries by lowercased StartupWMClass and file stem -> Icon.
+/// Earlier (user) directories win over later (system) ones.
 fn build_desktop_icon_map() -> HashMap<String, String> {
     let mut map = HashMap::new();
 
@@ -541,8 +522,7 @@ fn index_desktop_entry(map: &mut HashMap<String, String>, path: &Path, contents:
     }
 }
 
-/// Extract (StartupWMClass, Icon) from the `[Desktop Entry]` section of a
-/// desktop file.
+/// (StartupWMClass, Icon) from the `[Desktop Entry]` section.
 fn parse_desktop_entry(contents: &str) -> (Option<String>, Option<String>) {
     let mut in_desktop_entry = false;
     let mut wm_class = None;
@@ -629,9 +609,9 @@ mod tests {
     fn test_resolve_icon_size_auto_scales_with_rect() {
         // 60% of the smaller dimension, quantized to even integers
         assert_eq!(resolve_icon_size(IconSize::Auto, 40.0, 60.0), 24.0);
-        // Clamped to at least 8 before quantization
+        // min 8
         assert_eq!(resolve_icon_size(IconSize::Auto, 10.0, 10.0), 8.0);
-        // Clamped to at most 64
+        // max 64
         assert_eq!(resolve_icon_size(IconSize::Auto, 500.0, 500.0), 64.0);
     }
 
@@ -641,7 +621,6 @@ mod tests {
             resolve_icon_size(IconSize::Pixels(24.0), 100.0, 100.0),
             24.0
         );
-        // Explicit size can't exceed the rectangle
         assert_eq!(resolve_icon_size(IconSize::Pixels(24.0), 12.0, 100.0), 12.0);
     }
 

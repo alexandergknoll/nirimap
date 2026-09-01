@@ -14,7 +14,6 @@ use crate::state::{MinimapState, Window, Workspace};
 /// Outer padding around the minimap content, in minimap pixels.
 const PADDING: f64 = 4.0;
 
-/// Wrapper around DrawingArea for the minimap
 #[derive(Clone)]
 pub struct MinimapWidget {
     drawing_area: DrawingArea,
@@ -22,24 +21,22 @@ pub struct MinimapWidget {
     config: Rc<RefCell<Config>>,
     window: Rc<RefCell<Option<ApplicationWindow>>>,
     hide_timeout_id: Rc<Cell<Option<glib::SourceId>>>,
-    /// Track the last window ID that triggered a show via focus change
+    /// Last window id that triggered a show on focus change
     last_shown_focus_id: Rc<Cell<Option<u64>>>,
-    /// Cache of resolved application icons, cleared on config reload
+    /// Resolved app icons; cleared on config reload
     icon_cache: Rc<RefCell<IconCache>>,
 }
 
 impl MinimapWidget {
-    /// Create a new minimap widget
     pub fn new(config: Rc<RefCell<Config>>) -> Self {
         let drawing_area = DrawingArea::new();
         // Tag for the transparency CSS (see layer.rs).
         drawing_area.add_css_class("nirimap-canvas");
         let state = Rc::new(RefCell::new(MinimapState::new()));
 
-        // Start with just the height; width will be calculated
         let height = config.borrow().display.height as i32;
         drawing_area.set_content_height(height);
-        drawing_area.set_content_width(height); // Start square
+        drawing_area.set_content_width(height); // square until content sizes it
 
         let widget = Self {
             drawing_area,
@@ -55,35 +52,31 @@ impl MinimapWidget {
         widget
     }
 
-    /// Set the parent window (needed for dynamic resizing and visibility)
+    /// Attach the parent window (used for resizing and visibility).
     pub fn set_window(&self, window: ApplicationWindow) {
-        // Set initial visibility based on config
         if !self.config.borrow().behavior.always_visible {
             window.set_visible(false);
         }
         *self.window.borrow_mut() = Some(window);
     }
 
-    /// Show the minimap (with auto-hide timeout if configured)
+    /// Show, scheduling auto-hide unless `always_visible`.
     pub fn show(&self) {
         if let Some(window) = self.window.borrow().as_ref() {
             window.set_visible(true);
         }
 
-        // If not always visible, schedule hide after timeout
         if !self.config.borrow().behavior.always_visible {
             self.schedule_hide();
         }
     }
 
-    /// Show the minimap only if focus changed to a different window.
-    /// Returns true if the minimap was shown.
+    /// Show if focus moved to a different window than the one that last
+    /// triggered a show. Returns whether it was shown.
     ///
-    /// When `behavior.show_for_floating_windows` is false (the default), focus
-    /// changes involving a floating window are suppressed *and* do not advance
-    /// `last_shown_focus_id`. This means returning focus from a popup back to
-    /// the previously-focused tile won't re-trigger a show — the prior tile
-    /// is still recorded as the last shown id.
+    /// With `show_for_floating_windows` off, floating windows neither show the
+    /// minimap nor advance `last_shown_focus_id`, so returning focus from a
+    /// popup to the previous tile doesn't re-trigger a show.
     pub fn show_on_focus_change(&self, window_id: Option<u64>) -> bool {
         let last_id = self.last_shown_focus_id.get();
 
@@ -105,8 +98,7 @@ impl MinimapWidget {
         true
     }
 
-    /// Show the minimap for a newly-spawned window, respecting the
-    /// `show_for_floating_windows` opt-out.
+    /// Show for a newly spawned window, respecting `show_for_floating_windows`.
     pub fn show_for_new_window(&self, is_floating: bool) {
         if is_floating && !self.config.borrow().behavior.show_for_floating_windows {
             return;
@@ -114,9 +106,7 @@ impl MinimapWidget {
         self.show();
     }
 
-    /// Hide the minimap
     pub fn hide(&self) {
-        // Cancel any pending hide timeout
         self.cancel_hide_timeout();
 
         if let Some(window) = self.window.borrow().as_ref() {
@@ -124,9 +114,7 @@ impl MinimapWidget {
         }
     }
 
-    /// Schedule hiding the minimap after the configured timeout
     fn schedule_hide(&self) {
-        // Cancel any existing timeout
         self.cancel_hide_timeout();
 
         let timeout_ms = self.config.borrow().behavior.hide_timeout_ms;
@@ -146,24 +134,20 @@ impl MinimapWidget {
         self.hide_timeout_id.set(Some(source_id));
     }
 
-    /// Cancel any pending hide timeout
     fn cancel_hide_timeout(&self) {
         if let Some(source_id) = self.hide_timeout_id.take() {
             source_id.remove();
         }
     }
 
-    /// Reload the configuration from disk
     pub fn reload_config(&self) {
         match Config::load() {
             Ok(new_config) => {
-                // Update the config
                 *self.config.borrow_mut() = new_config;
 
-                // Drop cached icons so theme_override changes take effect
+                // So theme_override changes take effect.
                 self.icon_cache.borrow_mut().clear();
 
-                // Trigger resize and redraw
                 self.update_size();
                 self.drawing_area.queue_draw();
 
@@ -175,12 +159,11 @@ impl MinimapWidget {
         }
     }
 
-    /// Get the underlying DrawingArea widget
     pub fn widget(&self) -> &DrawingArea {
         &self.drawing_area
     }
 
-    /// Update the state, resize if needed, and trigger a redraw
+    /// Mutate the state, then resize and redraw.
     pub fn update_state<F>(&self, f: F)
     where
         F: FnOnce(&mut MinimapState),
@@ -190,7 +173,7 @@ impl MinimapWidget {
         self.drawing_area.queue_draw();
     }
 
-    /// Calculate and update the widget/window size based on current state
+    /// Resize the widget and window to fit the current state.
     fn update_size(&self) {
         let state = self.state.borrow();
         let config = self.config.borrow();
@@ -217,7 +200,7 @@ impl MinimapWidget {
         }
     }
 
-    /// Get monitor-based caps for widget width and height.
+    /// Widget (max_width, max_height) from the monitor size and config percentages.
     fn get_monitor_caps(&self) -> (f64, f64) {
         let display_cfg = &self.config.borrow().display;
         let max_width_percent = display_cfg.max_width_percent;
@@ -234,11 +217,10 @@ impl MinimapWidget {
             }
         }
 
-        // Fallback: use a reasonable default (1920x1080 baseline)
+        // No monitor info: assume 1080p.
         (1920.0 * max_width_percent, 1080.0 * max_height_percent)
     }
 
-    /// Set up the draw handler
     fn setup_draw_handler(&self) {
         let state = self.state.clone();
         let config = self.config.clone();
@@ -262,12 +244,11 @@ impl MinimapWidget {
     }
 }
 
-/// Monitor's logical width — used as the workspace viewport width.
+/// Monitor logical width, used as the workspace viewport width.
 ///
-/// Niri's per-workspace viewport equals its output's logical width. We don't
-/// query niri-ipc for output info today, so we use the GTK display's monitor
-/// geometry, which matches for the single-output case (the only setup nirimap
-/// currently supports — see "Known limitations" in the README).
+/// Niri's viewport equals the output's logical width. Outputs aren't queried
+/// via IPC, so the GTK monitor geometry stands in — correct for the
+/// single-output case (see "Known limitations" in the README).
 fn monitor_logical_width() -> f64 {
     if let Some(display) = gtk4::gdk::Display::default() {
         if let Some(monitor) = display.monitors().item(0) {
@@ -284,30 +265,24 @@ struct WorkspaceLayout<'a> {
     workspace: &'a Workspace,
     /// Tiled windows grouped by column, sorted by window_index.
     columns: BTreeMap<usize, Vec<&'a Window>>,
-    /// X position of each column in scrolling-layout (workspace) coords.
+    /// X of each column in workspace coords.
     column_x_positions: Vec<f64>,
-    /// Total width of the scrolling layout.
+    /// Width of the scrolling layout.
     total_width: f64,
-    /// Max column height across the workspace.
+    /// Tallest column.
     max_height: f64,
-    /// Workspace-x of this workspace's alignment column — the column that
-    /// should land at the shared screen anchor. Derived from the workspace's
-    /// `active_window_id` (the most-recently-focused window on that workspace,
-    /// which Niri tracks per-workspace and uses for Overview-style alignment).
-    /// Falls back to 0 when no active window is tracked.
+    /// Workspace-x of the viewport's left edge; rows are drawn so this lands at
+    /// the shared screen anchor. See `build_workspace_layout` for how it's derived.
     align_x: f64,
-    /// Left extent in anchored coords: `-align_x` (col 0's anchored position).
+    /// Left extent in viewport-relative coords: `-align_x`.
     anchored_left: f64,
-    /// Right extent in anchored coords: `total_width - align_x`.
+    /// Right extent in viewport-relative coords: `total_width - align_x`.
     anchored_right: f64,
-    /// Whether this workspace has any tiled windows.
     has_tiled: bool,
 }
 
-/// Select the workspaces that should appear in `all` mode:
-/// any workspace that has at least one window, plus the focused one even if empty.
-/// This filters out Niri's trailing placeholder workspace (the always-present empty
-/// workspace users can scroll into to create a new one) unless the user is on it.
+/// Workspaces shown in `all` mode: those with windows, plus the focused one.
+/// This hides Niri's trailing empty placeholder workspace unless the user is on it.
 fn all_mode_rows(state: &MinimapState, viewport_width: f64) -> Vec<WorkspaceLayout<'_>> {
     let active_id = state.active_workspace_id;
     state
@@ -355,20 +330,12 @@ fn build_workspace_layout(workspace: &Workspace, viewport_width: f64) -> Workspa
     let total_width: f64 = column_widths.iter().sum();
     let max_height = column_heights.iter().fold(0.0_f64, |a, &b| a.max(b));
 
-    // Derive the viewport offset (`align_x`) — the workspace-x of the
-    // viewport's left edge.
-    //
-    // Niri populates `tile_pos_in_workspace_view` for tiles in the active
-    // workspace's viewport. When present we derive the real offset as
-    // `column_x - pos.x` from any such tile so the minimap mirrors niri's
-    // actual viewport, including the case where a sub-viewport-width column
-    // is positioned past the viewport's left edge (a negative offset — e.g.
-    // when niri right-aligns a shrunk window within the viewport).
-    //
-    // Without `pos` (background workspaces): if content fits in the viewport
-    // niri pins it at 0; otherwise we approximate using the last-focused
-    // window's column position, clamped to `[0, total_width - viewport_width]`
-    // so right-edge content stays right-aligned.
+    // Viewport offset. Niri reports `pos` for tiles in the active workspace's
+    // viewport, so `column_x - pos.x` gives the exact offset (possibly negative,
+    // e.g. a shrunk window right-aligned in the viewport). Background workspaces
+    // have no `pos`: content that fits is pinned at 0; otherwise approximate
+    // with the last-focused window's column, clamped so right-edge content
+    // stays right-aligned.
     let pos_offset = workspace
         .windows
         .values()
@@ -410,28 +377,22 @@ fn build_workspace_layout(workspace: &Workspace, viewport_width: f64) -> Workspa
     }
 }
 
-/// Resolved widget dimensions.
 struct WidgetDimensions {
     width: f64,
     height: f64,
 }
 
-/// Geometry shared across all workspace rows in `all` mode.
-///
-/// All rows use the same scale so viewports align visually. Each row is drawn
-/// from its own `row_x_origin` (the screen x where its workspace-coord 0 sits),
-/// which is computed from the shared `viewport_anchor_x` and the workspace's
-/// `viewport_offset`.
+/// Geometry shared by every row in `all` mode: one scale, and one screen x
+/// where each workspace's viewport left edge lands so viewports line up.
 struct AllModeGeometry {
     widget_width: f64,
     widget_height: f64,
     row_height: f64,
     scale: f64,
-    /// Screen x where the anchored frame's origin (viewport left edge) lives.
+    /// Screen x of each row's viewport left edge.
     viewport_anchor_x: f64,
 }
 
-/// Compute shared all-mode geometry from the workspace rows and config caps.
 fn compute_all_mode_geometry(
     rows: &[WorkspaceLayout<'_>],
     display: &DisplayConfig,
@@ -465,8 +426,7 @@ fn compute_all_mode_geometry(
         0.0
     };
 
-    // Content extents in the anchored (viewport-relative) frame across all
-    // rows. Each workspace contributes `[-viewport_offset, total_width - viewport_offset]`.
+    // Content extents across all rows, in viewport-relative coords.
     let combined_left = rows
         .iter()
         .filter(|l| l.has_tiled)
@@ -481,8 +441,7 @@ fn compute_all_mode_geometry(
 
     let (scaled_content_width, ideal_anchor) = if has_content {
         let w = (combined_right - combined_left) * scale;
-        // Place the leftmost anchored content at x = PADDING; then anchored x=0
-        // (each workspace's viewport left edge) lives at:
+        // Leftmost content sits at x = PADDING.
         let anchor = PADDING - combined_left * scale;
         (w, anchor)
     } else {
@@ -492,12 +451,10 @@ fn compute_all_mode_geometry(
     let ideal_width = scaled_content_width + PADDING * 2.0;
     let widget_width = ideal_width.min(max_width).max(min_widget_width);
 
-    // If content fits, keep the leftmost-anchored layout. If we got clamped
-    // narrower, shifting `viewport_anchor_x` keeps the leftmost extent at
-    // PADDING but pushes content past the right edge — and a workspace with a
-    // large left-side off-viewport context (large `align_x`) can drag every
-    // workspace's viewport off the visible widget. Re-center on the viewport
-    // (anchored x in [0, viewport_width]) instead so it's always visible.
+    // If content overflows the width cap, keeping the leftmost extent at PADDING
+    // could push every viewport off the widget (a workspace with lots of
+    // off-viewport content to its left has a large `align_x`). Center the
+    // viewport instead so it's always visible.
     let inner_width = (widget_width - PADDING * 2.0).max(0.0);
     let viewport_anchor_x = if !has_content || scaled_content_width <= inner_width {
         ideal_anchor
@@ -515,7 +472,7 @@ fn compute_all_mode_geometry(
     }
 }
 
-/// Compute widget dimensions based on state and config.
+/// Widget size for the current state.
 fn compute_widget_dimensions(
     state: &MinimapState,
     display: &DisplayConfig,
@@ -568,8 +525,7 @@ fn compute_widget_dimensions(
     }
 }
 
-/// Compute the scaled width a workspace row would occupy at the given inner row height
-/// when rendered with column-centered layout ("current" mode).
+/// Scaled width of a row in `current` mode at the given inner row height.
 fn row_scaled_width_centered(layout: &WorkspaceLayout<'_>, row_inner_height: f64) -> f64 {
     if layout.total_width <= 0.0 || layout.max_height <= 0.0 || row_inner_height <= 0.0 {
         return 0.0;
@@ -578,7 +534,6 @@ fn row_scaled_width_centered(layout: &WorkspaceLayout<'_>, row_inner_height: f64
     layout.total_width * scale
 }
 
-/// Draw the minimap
 #[allow(clippy::too_many_arguments)]
 fn draw_minimap(
     cr: &Context,
@@ -595,12 +550,12 @@ fn draw_minimap(
     let width = width as f64;
     let height = height as f64;
 
-    // Clear with transparency first
+    // Clear to transparent.
     cr.set_operator(Operator::Clear);
     cr.paint().ok();
     cr.set_operator(Operator::Over);
 
-    // Optional background fill — applied in both modes; transparent by default.
+    // Optional background (transparent by default).
     if appearance.background_opacity > 0.0 {
         if let Some(bg_color) = Color::from_hex(&appearance.background) {
             cr.set_source_rgba(
@@ -644,10 +599,7 @@ fn draw_minimap(
                 return;
             }
 
-            // Recompute the shared geometry using this draw call's actual widget size.
-            // max_height is effectively the current height — we use the drawing area's
-            // reported height as both the ideal and the cap to stay consistent with
-            // what was set by update_size().
+            // Recompute with the actual widget size as the cap, matching update_size().
             let geom = compute_all_mode_geometry(
                 &rows,
                 display,
@@ -667,7 +619,7 @@ fn draw_minimap(
 
             let mut y = PADDING;
             for layout in &rows {
-                // Active workspace highlight: border around the row rectangle.
+                // Active workspace border.
                 if layout.workspace.is_active && appearance.active_workspace_border_width > 0.0 {
                     cr.set_source_rgba(
                         active_border.r,
@@ -710,11 +662,8 @@ fn draw_minimap(
     }
 }
 
-/// Draw all tiled windows of one workspace into the rectangle
-/// `(offset_x, offset_y, row_width, row_height)` using column-based centered layout.
-///
-/// Used for `current` mode: windows are grouped by column and laid out as a single
-/// scrolling-layout image, horizontally centered in the row.
+/// `current` mode: draw a workspace's tiled windows scaled to `row_height` and
+/// horizontally centered in the row.
 #[allow(clippy::too_many_arguments)]
 fn draw_workspace_row_centered(
     cr: &Context,
@@ -732,7 +681,6 @@ fn draw_workspace_row_centered(
         return;
     }
 
-    // Scale to fit height; horizontally center within the row.
     let scale = row_height / layout.max_height;
     let scaled_width = layout.total_width * scale;
     let x_origin = offset_x + (row_width - scaled_width).max(0.0) / 2.0;
@@ -776,7 +724,6 @@ fn draw_workspace_row_centered(
 
             y_pos += window.size.1;
 
-            // Apply gap
             let x = x + half_gap;
             let y = y + half_gap;
             let w = (w - gap).max(1.0);
@@ -814,20 +761,13 @@ fn draw_workspace_row_centered(
         }
     }
 
-    // Floating windows intentionally not drawn here: see comment in git history
-    // and issue #6 — viewport offset is not exposed by Niri IPC, so floating
-    // window placement on the minimap is unreliable.
+    // Floating windows aren't drawn: Niri IPC doesn't expose the viewport offset,
+    // so their placement would be unreliable (issue #6).
 }
 
-/// Draw all tiled windows of one workspace using viewport-anchored column layout.
-///
-/// Used for `all` mode. Columns are placed in scrolling-layout coordinates,
-/// then shifted by the workspace's own `viewport_offset` so that the workspace
-/// viewport (workspace-x = viewport_offset) lands at the shared
-/// `viewport_anchor_x`. Different workspaces with different viewport offsets
-/// therefore shift horizontally relative to each other (Overview-style).
-/// The drawing is clipped to the row's bounds so content outside the row
-/// doesn't leak into neighbouring rows.
+/// `all` mode: draw a workspace's tiled windows at the shared `scale`, shifted so
+/// its viewport left edge lands at `viewport_anchor_x` (Overview-style), and
+/// clipped to the row.
 #[allow(clippy::too_many_arguments)]
 fn draw_workspace_row_viewport(
     cr: &Context,
@@ -869,13 +809,11 @@ fn draw_workspace_row_viewport(
     let gap = appearance.gap;
     let half_gap = gap / 2.0;
 
-    // Screen x where this workspace's column at workspace-x = 0 sits.
-    // Equivalent to `viewport_anchor_x + anchored_left * scale`.
+    // Screen x of workspace-x = 0.
     let row_x_origin = viewport_anchor_x - layout.align_x * scale;
     let y_origin = offset_y;
 
-    // Clip to the row rect so off-viewport content doesn't leak into
-    // adjacent workspace rows or outside the widget.
+    // Clip so off-viewport content doesn't spill into neighbouring rows.
     cr.save().ok();
     cr.rectangle(offset_x, offset_y, row_width, row_height);
     cr.clip();
@@ -936,7 +874,7 @@ fn draw_workspace_row_viewport(
     cr.restore().ok();
 }
 
-/// Draw a rounded rectangle path
+/// Trace a rounded-rectangle path (no fill or stroke).
 fn rounded_rectangle(cr: &Context, x: f64, y: f64, width: f64, height: f64, radius: f64) {
     let radius = radius.min(width / 2.0).min(height / 2.0);
 

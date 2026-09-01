@@ -4,54 +4,36 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::config::{Anchor, Config};
 
-/// Create and configure a layer-shell window for the minimap
+/// Create the layer-shell overlay window.
 pub fn create_layer_window(app: &Application, config: &Config) -> ApplicationWindow {
-    // Start with height from config; width will be set dynamically
     let window = ApplicationWindow::builder()
         .application(app)
-        .default_width(config.display.height as i32) // Start square, will resize
+        .default_width(config.display.height as i32) // square until content sizes it
         .default_height(config.display.height as i32)
         .decorated(false)
-        .resizable(true) // Allow resizing for dynamic width
+        .resizable(true)
         .build();
 
-    // Tag the window with a CSS class so our transparency rules can target it
-    // with high specificity (themes commonly set `.background { ... !important }`,
-    // which beats `* { ... !important }` due to specificity).
+    // Targeted by the transparency CSS below.
     window.add_css_class("nirimap-window");
 
-    // Initialize layer shell
     window.init_layer_shell();
-
-    // Set the namespace for layer rules
     window.set_namespace(Some("nirimap"));
-
-    // Set layer to overlay (above fullscreen windows)
-    window.set_layer(Layer::Overlay);
-
-    // Don't reserve exclusive screen space
+    window.set_layer(Layer::Overlay); // above fullscreen windows
     window.set_exclusive_zone(0);
-
-    // No keyboard interactivity (read-only minimap)
     window.set_keyboard_mode(KeyboardMode::None);
-
-    // Make window click-through (don't receive pointer events at GTK level)
+    // GTK-level click-through; the Wayland-level input region is emptied on realize.
     window.set_can_target(false);
 
-    // Configure anchor based on config
     configure_anchor(&window, config);
-
-    // Set margins
     window.set_margin(Edge::Top, config.display.margin_y);
     window.set_margin(Edge::Bottom, config.display.margin_y);
     window.set_margin(Edge::Left, config.display.margin_x);
     window.set_margin(Edge::Right, config.display.margin_x);
 
-    // Set up CSS for transparency. GTK renders widget CSS backgrounds in a
-    // separate render node beneath our Cairo content, so we must zero it out
-    // via CSS. Use high-specificity selectors targeting our own CSS class so
-    // theme rules (often `.background { ... !important }`, specificity 0,0,1,0)
-    // can't beat us. Combine class + tag for specificity 0,0,1,1.
+    // GTK paints widget CSS backgrounds beneath our Cairo content, so zero them
+    // out. Element + class selectors (specificity 0,1,1) beat theme rules like
+    // `.background { ... !important }`.
     let css_provider = gtk4::CssProvider::new();
     css_provider.connect_parsing_error(|_, section, error| {
         tracing::error!(
@@ -77,10 +59,9 @@ pub fn create_layer_window(app: &Application, config: &Config) -> ApplicationWin
         gtk4::STYLE_PROVIDER_PRIORITY_USER,
     );
 
-    // Set up empty input region for true click-through at Wayland level
+    // Empty input region: click-through at the Wayland level.
     window.connect_realize(|window| {
         if let Some(surface) = window.surface() {
-            // Create an empty region for input - this makes the surface click-through
             let empty_region = gtk4::cairo::Region::create();
             surface.set_input_region(Some(&empty_region));
         }
@@ -89,23 +70,19 @@ pub fn create_layer_window(app: &Application, config: &Config) -> ApplicationWin
     window
 }
 
-/// Configure the window anchor position based on config
 fn configure_anchor(window: &ApplicationWindow, config: &Config) {
-    // First, unset all anchors
     window.set_anchor(Edge::Top, false);
     window.set_anchor(Edge::Bottom, false);
     window.set_anchor(Edge::Left, false);
     window.set_anchor(Edge::Right, false);
 
-    // Set appropriate anchors based on config
     match config.display.anchor {
         Anchor::TopLeft => {
             window.set_anchor(Edge::Top, true);
             window.set_anchor(Edge::Left, true);
         }
         Anchor::TopCenter => {
-            window.set_anchor(Edge::Top, true);
-            // No left/right anchor = centered horizontally
+            window.set_anchor(Edge::Top, true); // unanchored horizontally = centered
         }
         Anchor::TopRight => {
             window.set_anchor(Edge::Top, true);
@@ -116,15 +93,12 @@ fn configure_anchor(window: &ApplicationWindow, config: &Config) {
             window.set_anchor(Edge::Left, true);
         }
         Anchor::BottomCenter => {
-            window.set_anchor(Edge::Bottom, true);
-            // No left/right anchor = centered horizontally
+            window.set_anchor(Edge::Bottom, true); // unanchored horizontally = centered
         }
         Anchor::BottomRight => {
             window.set_anchor(Edge::Bottom, true);
             window.set_anchor(Edge::Right, true);
         }
-        Anchor::Center => {
-            // No anchors = centered both horizontally and vertically
-        }
+        Anchor::Center => {} // unanchored = centered both ways
     }
 }
