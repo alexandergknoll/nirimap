@@ -17,6 +17,17 @@ use crate::state::Window;
 /// Inset from the window edge for icons anchored at a corner/edge.
 const ICON_EDGE_INSET: f64 = 2.0;
 
+/// Upper bound on cached icon resolutions. Cache keys include the
+/// client-controlled `app_id`, so without a cap a client that keeps changing
+/// its app_id could grow the cache (and trigger a theme lookup per change)
+/// without limit. When the cap is hit the cache is flushed; re-resolving a
+/// few hundred icons is cheap.
+const ICON_CACHE_MAX_ENTRIES: usize = 512;
+
+/// Longest `app_id` we attempt to resolve. Real desktop entry ids and icon
+/// names are far shorter; anything longer is not worth a lookup or a cache slot.
+const MAX_APP_ID_LEN: usize = 255;
+
 /// Horizontal placement derived from an anchor.
 enum HAlign {
     Left,
@@ -349,12 +360,21 @@ impl IconCache {
         scale: i32,
         theme_override: Option<&str>,
     ) -> Option<gdk::Paintable> {
+        if app_id.len() > MAX_APP_ID_LEN {
+            return None;
+        }
+
         let key = (app_id.to_string(), size, scale);
         if let Some(cached) = self.icons.get(&key) {
             return cached.clone();
         }
 
         let resolved = self.resolve(app_id, size, scale, theme_override);
+
+        if self.icons.len() >= ICON_CACHE_MAX_ENTRIES {
+            tracing::debug!("Icon cache reached {} entries, flushing", self.icons.len());
+            self.icons.clear();
+        }
         self.icons.insert(key, resolved.clone());
         resolved
     }
@@ -369,9 +389,15 @@ impl IconCache {
         let theme = self.theme(theme_override)?.clone();
 
         let lowercase = app_id.to_lowercase();
-        for name in [app_id, lowercase.as_str()] {
-            if theme.has_icon(name) {
-                return Some(self.themed_icon(&theme, name, size, scale));
+
+        // Only hand the app_id to the icon theme if it looks like an icon
+        // name. The desktop-file fallback below is a plain map lookup, so it
+        // stays available for unusual app_ids (e.g. ones containing spaces).
+        if is_plain_icon_name(app_id) {
+            for name in [app_id, lowercase.as_str()] {
+                if theme.has_icon(name) {
+                    return Some(self.themed_icon(&theme, name, size, scale));
+                }
             }
         }
 
@@ -432,6 +458,20 @@ impl IconCache {
 
         self.theme.as_ref().map(|(_, t)| t)
     }
+}
+
+/// Whether `name` is safe to pass to the icon theme as an icon name.
+///
+/// Icon names and desktop entry ids are built from `[A-Za-z0-9._-]`. The
+/// app_id is set by an arbitrary Wayland client, so path separators,
+/// whitespace, and control characters are rejected rather than forwarded to
+/// GTK's lookup machinery.
+fn is_plain_icon_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_APP_ID_LEN
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +643,44 @@ mod tests {
         );
         // Explicit size can't exceed the rectangle
         assert_eq!(resolve_icon_size(IconSize::Pixels(24.0), 12.0, 100.0), 12.0);
+    }
+
+    #[test]
+    fn test_is_plain_icon_name_accepts_typical_app_ids() {
+        for name in [
+            "firefox",
+            "org.gnome.Nautilus",
+            "com.mitchellh.ghostty",
+            "code-url-handler",
+            "Alacritty",
+            "steam_app_1234",
+        ] {
+            assert!(is_plain_icon_name(name), "{name:?} should be accepted");
+        }
+    }
+
+    #[test]
+    fn test_is_plain_icon_name_rejects_paths_whitespace_and_control() {
+        for name in [
+            "",
+            "../../etc/passwd",
+            "/usr/share/icons/x.png",
+            "Microsoft Teams",
+            "evil\ntitle",
+            "app\0id",
+            "tab\tapp",
+            "ünïcödé",
+        ] {
+            assert!(!is_plain_icon_name(name), "{name:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn test_is_plain_icon_name_rejects_overlong() {
+        let ok = "a".repeat(MAX_APP_ID_LEN);
+        let too_long = "a".repeat(MAX_APP_ID_LEN + 1);
+        assert!(is_plain_icon_name(&ok));
+        assert!(!is_plain_icon_name(&too_long));
     }
 
     #[test]
