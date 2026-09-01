@@ -56,11 +56,10 @@ where
         let event: Event = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(err) => {
-                tracing::warn!(
-                    "Skipping unrecognized event ({}): {}",
-                    err,
-                    &line[..line.len().min(100)]
-                );
+                // The payload can contain window titles, so keep it out of the
+                // default log level and only show a bounded prefix when asked.
+                tracing::warn!("Skipping unrecognized event: {}", err);
+                tracing::debug!("Unrecognized event payload: {}", truncate_chars(&line, 200));
                 continue;
             }
         };
@@ -113,6 +112,16 @@ fn fetch_initial_state() -> Result<MinimapState> {
     }
 
     Ok(state)
+}
+
+/// Truncate `s` to at most `max_chars` characters without splitting a UTF-8
+/// sequence. (Slicing by byte index panics mid-character, and event payloads
+/// carry arbitrary window titles.)
+fn truncate_chars(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => &s[..byte_idx],
+        None => s,
+    }
 }
 
 /// Validate the socket path for security
@@ -259,6 +268,31 @@ fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_truncate_chars_short_string_unchanged() {
+        assert_eq!(truncate_chars("hello", 100), "hello");
+        assert_eq!(truncate_chars("", 100), "");
+        assert_eq!(truncate_chars("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_chars_ascii() {
+        assert_eq!(truncate_chars("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_chars_does_not_split_multibyte() {
+        // Each emoji is 4 bytes; a byte-index slice at 5 would panic.
+        let s = "🦀🦀🦀";
+        assert_eq!(truncate_chars(s, 1), "🦀");
+        assert_eq!(truncate_chars(s, 2), "🦀🦀");
+        assert_eq!(truncate_chars(s, 3), s);
+
+        let mixed = "ab日本語cd";
+        assert_eq!(truncate_chars(mixed, 3), "ab日");
+        assert_eq!(truncate_chars(mixed, 0), "");
+    }
 
     #[test]
     fn test_validate_socket_path_valid_absolute_paths() {

@@ -15,9 +15,6 @@ gtk4 = "0.11"
 gtk4-layer-shell = "0.8"
 pangocairo = "0.22"
 
-# Async runtime for IPC
-tokio = { version = "1", features = ["rt", "net", "sync", "io-util"] }
-
 # Configuration
 toml = "1"
 serde = { version = "1", features = ["derive"] }
