@@ -5,52 +5,28 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
     name: Build Release Binary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: write # create the GitHub release and upload assets
+      id-token: write # sign the build provenance attestation via Sigstore
+      attestations: write # store the attestation alongside the repo
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Set up build environment
+        uses: ./.github/actions/setup-build-env
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-release-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev meson ninja-build libwayland-dev wayland-protocols gobject-introspection libgirepository1.0-dev git
-
-      - name: Build and install gtk4-layer-shell
-        run: |
-          git clone https://github.com/wmww/gtk4-layer-shell.git
-          cd gtk4-layer-shell
-          meson setup build -Dprefix=/usr -Dvapi=false -Dintrospection=false -Ddocs=false -Dexamples=false
-          meson compile -C build
-          sudo meson install -C build
+          cache-key: release
 
       - name: Build release binary
         run: cargo build --release --verbose
@@ -62,8 +38,16 @@ jobs:
           cd ../..
           sha256sum nirimap-${{ github.ref_name }}-x86_64-linux.tar.gz > nirimap-${{ github.ref_name }}-x86_64-linux.tar.gz.sha256
 
+      # Publishes a signed SLSA provenance statement tying the tarball to this
+      # exact workflow run, commit, and repository. Users can check it with:
+      #   gh attestation verify nirimap-<tag>-x86_64-linux.tar.gz --owner alexandergknoll
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: nirimap-${{ github.ref_name }}-x86_64-linux.tar.gz
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
           files: |

@@ -5,94 +5,36 @@ on:
   push:
     branches: [ main ]
 
+# Default to read-only; no job in this workflow needs to write to the repo.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev meson ninja-build libwayland-dev wayland-protocols gobject-introspection libgirepository1.0-dev git
-
-      - name: Build and install gtk4-layer-shell
-        run: |
-          git clone https://github.com/wmww/gtk4-layer-shell.git
-          cd gtk4-layer-shell
-          meson setup build -Dprefix=/usr -Dvapi=false -Dintrospection=false -Ddocs=false -Dexamples=false
-          meson compile -C build
-          sudo meson install -C build
+      - name: Set up build environment
+        uses: ./.github/actions/setup-build-env
 
       - name: Run tests
         run: cargo test --verbose
 
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev meson ninja-build libwayland-dev wayland-protocols gobject-introspection libgirepository1.0-dev git
-
-      - name: Build and install gtk4-layer-shell
-        run: |
-          git clone https://github.com/wmww/gtk4-layer-shell.git
-          cd gtk4-layer-shell
-          meson setup build -Dprefix=/usr -Dvapi=false -Dintrospection=false -Ddocs=false -Dexamples=false
-          meson compile -C build
-          sudo meson install -C build
+      - name: Set up build environment
+        uses: ./.github/actions/setup-build-env
 
       - name: Build
         run: cargo build --verbose
@@ -102,60 +44,30 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up build environment
+        uses: ./.github/actions/setup-build-env
         with:
           components: clippy
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev meson ninja-build libwayland-dev wayland-protocols gobject-introspection libgirepository1.0-dev git
-
-      - name: Build and install gtk4-layer-shell
-        run: |
-          git clone https://github.com/wmww/gtk4-layer-shell.git
-          cd gtk4-layer-shell
-          meson setup build -Dprefix=/usr -Dvapi=false -Dintrospection=false -Ddocs=false -Dexamples=false
-          meson compile -C build
-          sudo meson install -C build
 
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   fmt:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch, 2026-08-05
         with:
+          toolchain: stable
           components: rustfmt
 
       - name: Check formatting
