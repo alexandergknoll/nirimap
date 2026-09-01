@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Rust dependencies. Minor/patch bumps are grouped into one PR to keep
+  # noise down; major bumps get their own PR.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: develop
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions. Actions are pinned to commit SHAs in the workflows;
+  # Dependabot updates both the SHA and the version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: develop

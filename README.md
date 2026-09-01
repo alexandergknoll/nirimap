@@ -31,6 +31,17 @@ paru -S nirimap-git
 
 > **Note**: The AUR package is maintained by a community member, not by the developer of this project. Please direct packaging issues to the AUR package's maintainer.
 
+### Pre-built binaries
+
+Each [release](https://github.com/alexandergknoll/nirimap/releases) ships an `x86_64-linux` tarball built by GitHub Actions, with a SHA-256 checksum and a signed [build-provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations). Verify a download before installing:
+
+```bash
+sha256sum -c nirimap-<tag>-x86_64-linux.tar.gz.sha256
+gh attestation verify nirimap-<tag>-x86_64-linux.tar.gz --owner alexandergknoll
+```
+
+The binary dynamically links GTK4 and gtk4-layer-shell, which must be installed on the target system (see the distro package lists below).
+
 ### From source
 
 Requires Rust 1.75+ and GTK4 development libraries.
