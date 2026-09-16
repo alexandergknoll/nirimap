@@ -42,6 +42,21 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
+  nix:
+    name: Nix flake
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      # Builds the package and runs the test suite inside the Nix sandbox, so a
+      # broken flake or a stale flake.lock fails here rather than for NixOS users.
+      - name: Check flake
+        run: nix flake check --print-build-logs
+
   clippy:
     name: Clippy
     runs-on: ubuntu-24.04
