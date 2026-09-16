@@ -31,6 +31,55 @@ paru -S nirimap-git
 
 > **Note**: The AUR package is maintained by a community member, not by the developer of this project. Please direct packaging issues to the AUR package's maintainer.
 
+### NixOS (flake)
+
+This repository is a Nix flake. To try it without installing anything:
+
+```bash
+nix run github:alexandergknoll/nirimap
+```
+
+Add it to a flake-based system or Home Manager configuration:
+
+```nix
+{
+  inputs.nirimap.url = "github:alexandergknoll/nirimap";
+  # Optional: build against your own nixpkgs instead of the pinned one.
+  # inputs.nirimap.inputs.nixpkgs.follows = "nixpkgs";
+}
+```
+
+Then install the package directly (`inputs.nirimap.packages.${pkgs.system}.default`), or
+use the overlay (`inputs.nirimap.overlays.default`, which adds `pkgs.nirimap`).
+
+A Home Manager module is included. It installs the package and, if you set
+`settings`, renders `~/.config/nirimap/config.toml` from Nix:
+
+```nix
+{
+  imports = [ inputs.nirimap.homeModules.default ];
+
+  programs.nirimap = {
+    enable = true;
+    settings = {
+      display = {
+        anchor = "top-right";
+        workspace_mode = "all";
+      };
+      appearance.focused_color = "#89b4fa";
+      behavior.always_visible = true;
+    };
+  };
+}
+```
+
+Every option from the [Configuration](#configuration) section is accepted; the keys match
+the TOML file one-to-one. Leave `settings` unset to let nirimap write and manage its own
+config file as usual.
+
+The module does not autostart nirimap — add `spawn-at-startup "nirimap"` to your Niri
+config as described in [Usage](#usage).
+
 ### Pre-built binaries
 
 Each [release](https://github.com/alexandergknoll/nirimap/releases) ships an `x86_64-linux` tarball built by GitHub Actions, with a SHA-256 checksum and a signed [build-provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations). Verify a download before installing:
@@ -62,6 +111,9 @@ cargo install --path .
 # Build for release
 cargo build --release
 ```
+
+On Nix, `nix develop` provides the toolchain and GTK4 dependencies instead, and
+`nix build` builds the package the flake exports.
 
 ## Usage
 
