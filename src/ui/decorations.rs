@@ -9,9 +9,8 @@ use gtk4::pango;
 use gtk4::prelude::*;
 use gtk4::IconTheme;
 
-use crate::config::{
-    Anchor, Color, Config, FontStyle, FontWeight, IconSize, LabelConfig, LabelContent,
-};
+use super::draw::DrawCtx;
+use crate::config::{Anchor, Color, FontStyle, FontWeight, IconSize, LabelConfig, LabelContent};
 use crate::state::Window;
 
 /// Inset from the window edge for icons anchored at a corner/edge.
@@ -54,30 +53,28 @@ fn anchor_v(anchor: Anchor) -> VAlign {
 }
 
 /// Draw the configured decorations (icon, then label) for one window rectangle.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_window_decorations(
-    cr: &Context,
+pub(super) fn draw_window_decorations(
+    ctx: &mut DrawCtx<'_>,
     window: &Window,
     x: f64,
     y: f64,
     w: f64,
     h: f64,
-    config: &Config,
-    icon_cache: &mut IconCache,
-    widget_scale: i32,
 ) {
+    let config = ctx.config;
+
     if config.icons.enabled
         && w >= config.icons.min_window_size
         && h >= config.icons.min_window_size
     {
-        draw_window_icon(cr, window, x, y, w, h, config, icon_cache, widget_scale);
+        draw_window_icon(ctx, window, x, y, w, h);
     }
 
     if config.labels.enabled
         && w >= config.labels.min_window_size
         && h >= config.labels.min_window_size
     {
-        draw_window_label(cr, window, x, y, w, h, &config.labels);
+        draw_window_label(ctx.cr, window, x, y, w, h, &config.labels);
     }
 }
 
@@ -196,23 +193,13 @@ fn resolve_icon_size(size: IconSize, w: f64, h: f64) -> f64 {
     ((ideal.min(max_fit) / 2.0).round() * 2.0).max(2.0)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_window_icon(
-    cr: &Context,
-    window: &Window,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    config: &Config,
-    icon_cache: &mut IconCache,
-    widget_scale: i32,
-) {
+fn draw_window_icon(ctx: &mut DrawCtx<'_>, window: &Window, x: f64, y: f64, w: f64, h: f64) {
     let Some(app_id) = window.app_id.as_deref().filter(|s| !s.is_empty()) else {
         return;
     };
 
-    let icons = &config.icons;
+    let cr = ctx.cr;
+    let icons = &ctx.config.icons;
     let size = resolve_icon_size(icons.size, w, h);
     if size < 4.0 {
         return;
@@ -238,10 +225,10 @@ fn draw_window_icon(
     cr.rectangle(x, y, w, h);
     cr.clip();
 
-    match icon_cache.lookup(
+    match ctx.icon_cache.lookup(
         app_id,
         size as i32,
-        widget_scale.max(1),
+        ctx.widget_scale.max(1),
         icons.theme_override.as_deref(),
     ) {
         Some(paintable) => draw_paintable(cr, &paintable, ix, iy, size, opacity),
