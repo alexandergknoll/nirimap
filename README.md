@@ -31,6 +31,28 @@ paru -S nirimap-git
 
 > **Note**: The AUR package is maintained by a community member, not by the developer of this project. Please direct packaging issues to the AUR package's maintainer.
 
+### NixOS (flake)
+
+This repository is a Nix flake. To try it without installing anything:
+
+```bash
+nix run github:alexandergknoll/nirimap
+```
+
+Add it to a flake-based system or Home Manager configuration:
+
+```nix
+{
+  inputs.nirimap.url = "github:alexandergknoll/nirimap";
+  # Optional: build against your own nixpkgs instead of the pinned one.
+  # inputs.nirimap.inputs.nixpkgs.follows = "nixpkgs";
+}
+```
+
+Then add `inputs.nirimap.packages.${pkgs.stdenv.hostPlatform.system}.default` to
+`environment.systemPackages` or `home.packages`. Configure it through
+`~/.config/nirimap/config.toml` as described in [Configuration](#configuration).
+
 ### Pre-built binaries
 
 Each [release](https://github.com/alexandergknoll/nirimap/releases) ships an `x86_64-linux` tarball built by GitHub Actions, with a SHA-256 checksum and a signed [build-provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations). Verify a download before installing:
