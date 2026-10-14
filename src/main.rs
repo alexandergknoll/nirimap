@@ -318,15 +318,7 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
                 for (window_id, layout) in layouts {
                     for workspace in state.workspaces.values_mut() {
                         if let Some(window) = workspace.windows.get_mut(&window_id) {
-                            window.pos = layout.tile_pos_in_workspace_view;
-                            window.size = layout.tile_size;
-                            window.is_floating = layout.pos_in_scrolling_layout.is_none();
-                            if let Some((col, win_idx)) = layout.pos_in_scrolling_layout {
-                                let (column_index, window_index) =
-                                    ipc::validate_and_convert_indices(col, win_idx, window_id);
-                                window.column_index = column_index;
-                                window.window_index = window_index;
-                            }
+                            window.apply_layout(&layout);
                         }
                     }
                 }
