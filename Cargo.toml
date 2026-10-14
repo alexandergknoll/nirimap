@@ -1,6 +1,6 @@
 [package]
 name = "nirimap"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "A minimap overlay for the Niri Wayland compositor"
 license = "MIT"
@@ -15,6 +15,9 @@ gtk4 = "0.11"
 gtk4-layer-shell = "0.8"
 pangocairo = "0.22"
 
+# Cross-thread channels the GTK main loop can await
+async-channel = "2"
+
 # Configuration
 toml = "1"
 serde = { version = "1", features = ["derive"] }
@@ -28,7 +31,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 
 # XDG paths
-dirs = "6"
+dirs = "7"
 
 # File watching for hot reload
 notify = "8"

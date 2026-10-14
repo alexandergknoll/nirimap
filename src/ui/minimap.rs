@@ -8,7 +8,8 @@ use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, DrawingArea};
 
 use super::decorations::{draw_window_decorations, IconCache};
-use crate::config::{Color, Config, DisplayConfig, WorkspaceMode};
+use super::draw::{DrawCtx, Palette};
+use crate::config::{Config, DisplayConfig, WorkspaceMode};
 use crate::state::{MinimapState, Window, Workspace};
 
 /// Outer padding around the minimap content, in minimap pixels.
@@ -25,6 +26,8 @@ pub struct MinimapWidget {
     last_shown_focus_id: Rc<Cell<Option<u64>>>,
     /// Resolved app icons; cleared on config reload
     icon_cache: Rc<RefCell<IconCache>>,
+    /// Colours parsed from `config`; rebuilt on config reload
+    palette: Rc<Cell<Palette>>,
 }
 
 impl MinimapWidget {
@@ -35,6 +38,7 @@ impl MinimapWidget {
         let state = Rc::new(RefCell::new(MinimapState::new()));
 
         let height = config.borrow().display.height as i32;
+        let palette = Palette::from_config(&config.borrow());
         drawing_area.set_content_height(height);
         drawing_area.set_content_width(height); // square until content sizes it
 
@@ -46,6 +50,7 @@ impl MinimapWidget {
             hide_timeout_id: Rc::new(Cell::new(None)),
             last_shown_focus_id: Rc::new(Cell::new(None)),
             icon_cache: Rc::new(RefCell::new(IconCache::new())),
+            palette: Rc::new(Cell::new(palette)),
         };
 
         widget.setup_draw_handler();
@@ -143,6 +148,7 @@ impl MinimapWidget {
     pub fn reload_config(&self) {
         match Config::load() {
             Ok(new_config) => {
+                self.palette.set(Palette::from_config(&new_config));
                 *self.config.borrow_mut() = new_config;
 
                 // So theme_override changes take effect.
@@ -163,14 +169,12 @@ impl MinimapWidget {
         &self.drawing_area
     }
 
-    /// Mutate the state, then resize and redraw.
-    pub fn update_state<F>(&self, f: F)
-    where
-        F: FnOnce(&mut MinimapState),
-    {
-        f(&mut self.state.borrow_mut());
+    /// Mutate the state, then resize and redraw. Returns the closure's result.
+    pub fn update_state<R>(&self, f: impl FnOnce(&mut MinimapState) -> R) -> R {
+        let result = f(&mut self.state.borrow_mut());
         self.update_size();
         self.drawing_area.queue_draw();
+        result
     }
 
     /// Resize the widget and window to fit the current state.
@@ -225,20 +229,24 @@ impl MinimapWidget {
         let state = self.state.clone();
         let config = self.config.clone();
         let icon_cache = self.icon_cache.clone();
+        let palette = self.palette.clone();
 
         self.drawing_area
             .set_draw_func(move |area, cr, width, height| {
-                let cfg = config.borrow();
-                let viewport_width = monitor_logical_width();
-                draw_minimap(
+                let config = config.borrow();
+                let mut ctx = DrawCtx {
                     cr,
+                    config: &config,
+                    palette: palette.get(),
+                    icon_cache: &mut icon_cache.borrow_mut(),
+                    widget_scale: area.scale_factor(),
+                };
+                draw_minimap(
+                    &mut ctx,
                     width,
                     height,
                     &state.borrow(),
-                    &cfg,
-                    viewport_width,
-                    &mut icon_cache.borrow_mut(),
-                    area.scale_factor(),
+                    monitor_logical_width(),
                 );
             });
     }
@@ -534,19 +542,15 @@ fn row_scaled_width_centered(layout: &WorkspaceLayout<'_>, row_inner_height: f64
     layout.total_width * scale
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_minimap(
-    cr: &Context,
+    ctx: &mut DrawCtx<'_>,
     width: i32,
     height: i32,
     state: &MinimapState,
-    config: &Config,
     viewport_width: f64,
-    icon_cache: &mut IconCache,
-    widget_scale: i32,
 ) {
-    let display = &config.display;
-    let appearance = &config.appearance;
+    let cr = ctx.cr;
+    let appearance = &ctx.config.appearance;
     let width = width as f64;
     let height = height as f64;
 
@@ -557,7 +561,7 @@ fn draw_minimap(
 
     // Optional background (transparent by default).
     if appearance.background_opacity > 0.0 {
-        if let Some(bg_color) = Color::from_hex(&appearance.background) {
+        if let Some(bg_color) = ctx.palette.background {
             cr.set_source_rgba(
                 bg_color.r,
                 bg_color.g,
@@ -569,254 +573,125 @@ fn draw_minimap(
         }
     }
 
-    let inner_width = (width - PADDING * 2.0).max(0.0);
-
-    match display.workspace_mode {
-        WorkspaceMode::Current => {
-            let Some(workspace) = state.active_workspace() else {
-                return;
-            };
-            let layout = build_workspace_layout(workspace, viewport_width);
-            if layout.total_width <= 0.0 || layout.max_height <= 0.0 {
-                return;
-            }
-            let row_inner_height = (height - PADDING * 2.0).max(0.0);
-            draw_workspace_row_centered(
-                cr,
-                &layout,
-                PADDING,
-                PADDING,
-                inner_width,
-                row_inner_height,
-                config,
-                icon_cache,
-                widget_scale,
-            );
-        }
-        WorkspaceMode::All => {
-            let rows = all_mode_rows(state, viewport_width);
-            if rows.is_empty() {
-                return;
-            }
-
-            // Recompute with the actual widget size as the cap, matching update_size().
-            let geom = compute_all_mode_geometry(
-                &rows,
-                display,
-                appearance.workspace_gap,
-                width,
-                height,
-                viewport_width,
-            );
-
-            let active_border = Color::from_hex(&appearance.active_workspace_border_color)
-                .unwrap_or(Color {
-                    r: 0.54,
-                    g: 0.71,
-                    b: 0.98,
-                    a: 1.0,
-                });
-
-            let mut y = PADDING;
-            for layout in &rows {
-                // Active workspace border.
-                if layout.workspace.is_active && appearance.active_workspace_border_width > 0.0 {
-                    cr.set_source_rgba(
-                        active_border.r,
-                        active_border.g,
-                        active_border.b,
-                        active_border.a,
-                    );
-                    cr.set_line_width(appearance.active_workspace_border_width);
-                    let inset = appearance.active_workspace_border_width / 2.0;
-                    rounded_rectangle(
-                        cr,
-                        PADDING + inset,
-                        y + inset,
-                        (inner_width - inset * 2.0).max(0.0),
-                        (geom.row_height - inset * 2.0).max(0.0),
-                        appearance.border_radius,
-                    );
-                    cr.stroke().ok();
-                }
-
-                if layout.has_tiled && geom.scale > 0.0 {
-                    draw_workspace_row_viewport(
-                        cr,
-                        layout,
-                        PADDING,
-                        y,
-                        inner_width,
-                        geom.row_height,
-                        geom.scale,
-                        geom.viewport_anchor_x,
-                        config,
-                        icon_cache,
-                        widget_scale,
-                    );
-                }
-
-                y += geom.row_height + appearance.workspace_gap;
-            }
-        }
+    match ctx.config.display.workspace_mode {
+        WorkspaceMode::Current => draw_current_workspace(ctx, state, width, height, viewport_width),
+        WorkspaceMode::All => draw_all_workspaces(ctx, state, width, height, viewport_width),
     }
 }
 
-/// `current` mode: draw a workspace's tiled windows scaled to `row_height` and
-/// horizontally centered in the row.
-#[allow(clippy::too_many_arguments)]
-fn draw_workspace_row_centered(
-    cr: &Context,
-    layout: &WorkspaceLayout<'_>,
-    offset_x: f64,
-    offset_y: f64,
-    row_width: f64,
-    row_height: f64,
-    config: &Config,
-    icon_cache: &mut IconCache,
-    widget_scale: i32,
+/// `current` mode: the active workspace's tiled windows, scaled to the widget
+/// height and horizontally centered.
+fn draw_current_workspace(
+    ctx: &mut DrawCtx<'_>,
+    state: &MinimapState,
+    width: f64,
+    height: f64,
+    viewport_width: f64,
 ) {
-    let appearance = &config.appearance;
+    let Some(workspace) = state.active_workspace() else {
+        return;
+    };
+    let layout = build_workspace_layout(workspace, viewport_width);
+    let row_width = (width - PADDING * 2.0).max(0.0);
+    let row_height = (height - PADDING * 2.0).max(0.0);
     if layout.total_width <= 0.0 || layout.max_height <= 0.0 || row_height <= 0.0 {
         return;
     }
 
     let scale = row_height / layout.max_height;
     let scaled_width = layout.total_width * scale;
-    let x_origin = offset_x + (row_width - scaled_width).max(0.0) / 2.0;
-    let y_origin = offset_y;
-
-    let window_color = Color::from_hex(&appearance.window_color).unwrap_or(Color {
-        r: 0.27,
-        g: 0.28,
-        b: 0.35,
-        a: 1.0,
-    });
-    let focused_color = Color::from_hex(&appearance.focused_color).unwrap_or(Color {
-        r: 0.54,
-        g: 0.71,
-        b: 0.98,
-        a: 1.0,
-    });
-    let border_color = Color::from_hex(&appearance.border_color).unwrap_or(Color {
-        r: 0.42,
-        g: 0.44,
-        b: 0.53,
-        a: 1.0,
-    });
-
-    let gap = appearance.gap;
-    let half_gap = gap / 2.0;
-
-    for (&col_idx, windows) in &layout.columns {
-        let col_x = layout
-            .column_x_positions
-            .get(col_idx)
-            .copied()
-            .unwrap_or(0.0);
-        let mut y_pos = 0.0;
-
-        for window in windows {
-            let x = x_origin + col_x * scale;
-            let y = y_origin + y_pos * scale;
-            let w = window.size.0 * scale;
-            let h = window.size.1 * scale;
-
-            y_pos += window.size.1;
-
-            let x = x + half_gap;
-            let y = y + half_gap;
-            let w = (w - gap).max(1.0);
-            let h = (h - gap).max(1.0);
-
-            if w < 1.0 || h < 1.0 {
-                continue;
-            }
-
-            let (fill_color, fill_alpha) = if window.is_focused {
-                (&focused_color, appearance.focused_opacity)
-            } else {
-                (&window_color, appearance.window_opacity)
-            };
-
-            if fill_alpha > 0.0 {
-                cr.set_source_rgba(fill_color.r, fill_color.g, fill_color.b, fill_alpha);
-                rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
-                cr.fill().ok();
-            }
-
-            if appearance.border_width > 0.0 {
-                cr.set_source_rgba(
-                    border_color.r,
-                    border_color.g,
-                    border_color.b,
-                    border_color.a,
-                );
-                cr.set_line_width(appearance.border_width);
-                rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
-                cr.stroke().ok();
-            }
-
-            draw_window_decorations(cr, window, x, y, w, h, config, icon_cache, widget_scale);
-        }
-    }
-
-    // Floating windows aren't drawn: Niri IPC doesn't expose the viewport offset,
-    // so their placement would be unreliable (issue #6).
+    let x_origin = PADDING + (row_width - scaled_width).max(0.0) / 2.0;
+    draw_tiled_windows(ctx, &layout, x_origin, PADDING, scale);
 }
 
-/// `all` mode: draw a workspace's tiled windows at the shared `scale`, shifted so
-/// its viewport left edge lands at `viewport_anchor_x` (Overview-style), and
-/// clipped to the row.
-#[allow(clippy::too_many_arguments)]
-fn draw_workspace_row_viewport(
-    cr: &Context,
-    layout: &WorkspaceLayout<'_>,
-    offset_x: f64,
-    offset_y: f64,
-    row_width: f64,
-    row_height: f64,
-    scale: f64,
-    viewport_anchor_x: f64,
-    config: &Config,
-    icon_cache: &mut IconCache,
-    widget_scale: i32,
+/// `all` mode: one row per workspace at a shared scale, each shifted so its
+/// viewport left edge lands at the same x (Overview-style).
+fn draw_all_workspaces(
+    ctx: &mut DrawCtx<'_>,
+    state: &MinimapState,
+    width: f64,
+    height: f64,
+    viewport_width: f64,
 ) {
-    let appearance = &config.appearance;
-    if !layout.has_tiled || scale <= 0.0 || row_width <= 0.0 || row_height <= 0.0 {
+    let cr = ctx.cr;
+    let appearance = &ctx.config.appearance;
+
+    let rows = all_mode_rows(state, viewport_width);
+    if rows.is_empty() {
         return;
     }
 
-    let window_color = Color::from_hex(&appearance.window_color).unwrap_or(Color {
-        r: 0.27,
-        g: 0.28,
-        b: 0.35,
-        a: 1.0,
-    });
-    let focused_color = Color::from_hex(&appearance.focused_color).unwrap_or(Color {
-        r: 0.54,
-        g: 0.71,
-        b: 0.98,
-        a: 1.0,
-    });
-    let border_color = Color::from_hex(&appearance.border_color).unwrap_or(Color {
-        r: 0.42,
-        g: 0.44,
-        b: 0.53,
-        a: 1.0,
-    });
+    // Recompute with the actual widget size as the cap, matching update_size().
+    let geom = compute_all_mode_geometry(
+        &rows,
+        &ctx.config.display,
+        appearance.workspace_gap,
+        width,
+        height,
+        viewport_width,
+    );
+
+    let active_border = ctx.palette.active_workspace_border;
+
+    let row_width = (width - PADDING * 2.0).max(0.0);
+    let mut y = PADDING;
+    for layout in &rows {
+        // Active workspace border.
+        if layout.workspace.is_active && appearance.active_workspace_border_width > 0.0 {
+            cr.set_source_rgba(
+                active_border.r,
+                active_border.g,
+                active_border.b,
+                active_border.a,
+            );
+            cr.set_line_width(appearance.active_workspace_border_width);
+            let inset = appearance.active_workspace_border_width / 2.0;
+            rounded_rectangle(
+                cr,
+                PADDING + inset,
+                y + inset,
+                (row_width - inset * 2.0).max(0.0),
+                (geom.row_height - inset * 2.0).max(0.0),
+                appearance.border_radius,
+            );
+            cr.stroke().ok();
+        }
+
+        if layout.has_tiled && geom.scale > 0.0 && row_width > 0.0 && geom.row_height > 0.0 {
+            // Screen x of workspace-x = 0.
+            let x_origin = geom.viewport_anchor_x - layout.align_x * geom.scale;
+
+            // Clip so off-viewport content doesn't spill into neighbouring rows.
+            cr.save().ok();
+            cr.rectangle(PADDING, y, row_width, geom.row_height);
+            cr.clip();
+            draw_tiled_windows(ctx, layout, x_origin, y, geom.scale);
+            cr.restore().ok();
+        }
+
+        y += geom.row_height + appearance.workspace_gap;
+    }
+}
+
+/// Draw a workspace's tiled windows, with workspace coordinate (0, 0) at
+/// (`x_origin`, `y_origin`) on screen.
+///
+/// Floating windows aren't drawn: Niri IPC doesn't expose the viewport offset,
+/// so their placement would be unreliable (issue #6).
+fn draw_tiled_windows(
+    ctx: &mut DrawCtx<'_>,
+    layout: &WorkspaceLayout<'_>,
+    x_origin: f64,
+    y_origin: f64,
+    scale: f64,
+) {
+    let cr = ctx.cr;
+    let appearance = &ctx.config.appearance;
+
+    let palette = ctx.palette;
 
     let gap = appearance.gap;
     let half_gap = gap / 2.0;
-
-    // Screen x of workspace-x = 0.
-    let row_x_origin = viewport_anchor_x - layout.align_x * scale;
-    let y_origin = offset_y;
-
-    // Clip so off-viewport content doesn't spill into neighbouring rows.
-    cr.save().ok();
-    cr.rectangle(offset_x, offset_y, row_width, row_height);
-    cr.clip();
 
     for (&col_idx, windows) in &layout.columns {
         let col_x = layout
@@ -827,26 +702,18 @@ fn draw_workspace_row_viewport(
         let mut y_pos = 0.0;
 
         for window in windows {
-            let x = row_x_origin + col_x * scale;
-            let y = y_origin + y_pos * scale;
-            let w = window.size.0 * scale;
-            let h = window.size.1 * scale;
+            // Inset by half the gap on each side; never collapse below 1px.
+            let x = x_origin + col_x * scale + half_gap;
+            let y = y_origin + y_pos * scale + half_gap;
+            let w = (window.size.0 * scale - gap).max(1.0);
+            let h = (window.size.1 * scale - gap).max(1.0);
 
             y_pos += window.size.1;
 
-            let x = x + half_gap;
-            let y = y + half_gap;
-            let w = (w - gap).max(1.0);
-            let h = (h - gap).max(1.0);
-
-            if w < 1.0 || h < 1.0 {
-                continue;
-            }
-
             let (fill_color, fill_alpha) = if window.is_focused {
-                (&focused_color, appearance.focused_opacity)
+                (palette.focused, appearance.focused_opacity)
             } else {
-                (&window_color, appearance.window_opacity)
+                (palette.window, appearance.window_opacity)
             };
 
             if fill_alpha > 0.0 {
@@ -857,21 +724,19 @@ fn draw_workspace_row_viewport(
 
             if appearance.border_width > 0.0 {
                 cr.set_source_rgba(
-                    border_color.r,
-                    border_color.g,
-                    border_color.b,
-                    border_color.a,
+                    palette.border.r,
+                    palette.border.g,
+                    palette.border.b,
+                    palette.border.a,
                 );
                 cr.set_line_width(appearance.border_width);
                 rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
                 cr.stroke().ok();
             }
 
-            draw_window_decorations(cr, window, x, y, w, h, config, icon_cache, widget_scale);
+            draw_window_decorations(ctx, window, x, y, w, h);
         }
     }
-
-    cr.restore().ok();
 }
 
 /// Trace a rounded-rectangle path (no fill or stroke).

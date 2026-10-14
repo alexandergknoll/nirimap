@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod config_watcher;
 mod ipc;
 mod state;
 mod ui;
@@ -8,14 +9,13 @@ mod ui;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
+use async_channel::Receiver;
 use gtk4::glib;
 use gtk4::prelude::*;
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use config::Config;
 use ipc::StateUpdate;
@@ -23,8 +23,10 @@ use ui::{create_layer_window, MinimapWidget};
 
 const APP_ID: &str = "com.github.nirimap";
 
-/// Minimum interval between config reloads.
-const CONFIG_RELOAD_DEBOUNCE_MS: u64 = 500;
+/// Pause after applying a batch of state updates. Updates arriving meanwhile
+/// are drained and coalesced as one batch, bounding the relayouts per second
+/// a client spamming changes can cause.
+const UPDATE_BATCH_INTERVAL: Duration = Duration::from_millis(50);
 
 enum ConfigMessage {
     Reload,
@@ -66,11 +68,11 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
     minimap.set_window(window.clone());
     window.set_child(Some(minimap.widget()));
 
-    let (tx, rx) = mpsc::channel::<StateUpdate>();
+    let (tx, rx) = async_channel::unbounded::<StateUpdate>();
 
     thread::spawn(move || {
         if let Err(e) = ipc::run_event_loop(move |update| {
-            if tx.send(update).is_err() {
+            if tx.send_blocking(update).is_err() {
                 tracing::warn!("Failed to send state update, receiver dropped");
             }
         }) {
@@ -78,38 +80,26 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
         }
     });
 
-    let (config_tx, config_rx) = mpsc::channel::<ConfigMessage>();
+    let (config_tx, config_rx) = async_channel::unbounded::<ConfigMessage>();
 
     let config_path = Config::config_path();
     thread::spawn(move || {
-        if let Err(e) = watch_config_file(config_path, config_tx) {
+        let on_reload = move || config_tx.send_blocking(ConfigMessage::Reload).is_ok();
+        if let Err(e) = config_watcher::watch_config_file(config_path, on_reload) {
             tracing::error!("Config watcher error: {}", e);
         }
     });
 
-    // Poll both channels from the GTK main loop.
-    let minimap_clone = minimap.clone();
-    let last_config_reload = Rc::new(RefCell::new(Instant::now()));
-    let config_reload_debounce = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
+    let minimap_for_updates = minimap.clone();
+    glib::spawn_future_local(apply_state_updates(rx, move |update| {
+        apply_state_update(&minimap_for_updates, update);
+    }));
 
-    glib::timeout_add_local(Duration::from_millis(50), move || {
-        for update in drain_state_updates(&rx) {
-            apply_state_update(&minimap_clone, update);
+    let minimap_for_config = minimap.clone();
+    glib::spawn_future_local(async move {
+        while let Ok(ConfigMessage::Reload) = config_rx.recv().await {
+            minimap_for_config.reload_config();
         }
-
-        while let Ok(ConfigMessage::Reload) = config_rx.try_recv() {
-            let now = Instant::now();
-            let mut last_reload = last_config_reload.borrow_mut();
-
-            if now.duration_since(*last_reload) >= config_reload_debounce {
-                minimap_clone.reload_config();
-                *last_reload = now;
-            } else {
-                tracing::debug!("Config reload debounced (too soon after last reload)");
-            }
-        }
-
-        glib::ControlFlow::Continue
     });
 
     // present() is required for layer-shell.
@@ -124,60 +114,26 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
     Ok(())
 }
 
-fn watch_config_file(
-    config_path: std::path::PathBuf,
-    tx: mpsc::Sender<ConfigMessage>,
-) -> Result<()> {
-    let (watcher_tx, watcher_rx) = mpsc::channel::<Result<Event, notify::Error>>();
-
-    let mut watcher = RecommendedWatcher::new(
-        move |res| {
-            let _ = watcher_tx.send(res);
-        },
-        notify::Config::default(),
-    )?;
-
-    // Watch the parent directory so atomic replaces (rename) are caught.
-    if let Some(parent) = config_path.parent() {
-        watcher.watch(parent, RecursiveMode::NonRecursive)?;
-        tracing::info!("Watching config directory: {}", parent.display());
-    }
-
-    for event in watcher_rx {
-        match event {
-            Ok(event) => {
-                let is_config_event = event.paths.iter().any(|p| p == &config_path);
-
-                if is_config_event {
-                    use notify::EventKind;
-                    match event.kind {
-                        EventKind::Create(_) | EventKind::Modify(_) => {
-                            tracing::debug!("Config file changed, triggering reload");
-                            if tx.send(ConfigMessage::Reload).is_err() {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("File watcher error: {}", e);
-            }
+/// Pass IPC updates to `apply` on the main loop as they arrive, in batches.
+/// Returns once the sender is dropped.
+async fn apply_state_updates(rx: Receiver<StateUpdate>, mut apply: impl FnMut(StateUpdate)) {
+    while let Ok(first) = rx.recv().await {
+        for update in drain_state_updates(first, &rx) {
+            apply(update);
         }
+        glib::timeout_future(UPDATE_BATCH_INTERVAL).await;
     }
-
-    Ok(())
 }
 
-/// Drain the IPC channel and coalesce the backlog.
+/// `first` plus everything already queued, with the backlog coalesced.
 ///
 /// A client can change its title thousands of times per second, each arriving
-/// as a `WindowChanged`. Taking the whole backlog per tick keeps the channel
+/// as a `WindowChanged`. Taking the whole backlog per batch keeps the channel
 /// bounded; [`coalesce_state_updates`] drops the redundant ones.
-fn drain_state_updates(rx: &mpsc::Receiver<StateUpdate>) -> Vec<StateUpdate> {
+fn drain_state_updates(first: StateUpdate, rx: &Receiver<StateUpdate>) -> Vec<StateUpdate> {
     let mut updates = Vec::new();
-    while let Ok(update) = rx.try_recv() {
+    let queued = std::iter::from_fn(|| rx.try_recv().ok());
+    for update in std::iter::once(first).chain(queued) {
         // A full snapshot supersedes everything queued before it.
         if matches!(update, StateUpdate::FullState(_)) {
             updates.clear();
@@ -224,35 +180,11 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
             let window_id = window.id;
             let is_focused = window.is_focused;
             let is_floating = window.is_floating;
-            let mut is_new_window = false;
-            let mut is_on_active_workspace = false;
-
-            minimap.update_state(|state| {
-                if is_focused {
-                    state.set_focused_window(Some(window_id));
-                }
-
-                if let Some(ws_id) = workspace_id {
-                    is_on_active_workspace = state.active_workspace_id == Some(ws_id);
-
-                    // Handles moves between workspaces.
-                    for (&id, workspace) in state.workspaces.iter_mut() {
-                        if id != ws_id {
-                            workspace.windows.remove(&window_id);
-                        }
-                    }
-
-                    let workspace = state
-                        .workspaces
-                        .entry(ws_id)
-                        .or_insert_with(Default::default);
-                    is_new_window = !workspace.windows.contains_key(&window_id);
-                    workspace.windows.insert(window_id, window);
-                }
-            });
+            let change =
+                minimap.update_state(|state| state.apply_window_change(window, workspace_id));
 
             // Only new windows on the active workspace trigger a show.
-            if is_on_active_workspace && is_new_window {
+            if change.is_new && change.on_active_workspace {
                 minimap.show_for_new_window(is_floating);
                 tracing::debug!(
                     "New window {} opened (focused: {}, floating: {})",
@@ -302,9 +234,7 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
             active_window_id,
         } => {
             minimap.update_state(|state| {
-                if let Some(ws) = state.workspaces.get_mut(&workspace_id) {
-                    ws.active_window_id = active_window_id;
-                }
+                state.set_workspace_active_window(workspace_id, active_window_id);
             });
             tracing::debug!(
                 "Workspace {} active window -> {:?}",
@@ -315,21 +245,7 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
 
         StateUpdate::LayoutsChanged(layouts) => {
             minimap.update_state(|state| {
-                for (window_id, layout) in layouts {
-                    for workspace in state.workspaces.values_mut() {
-                        if let Some(window) = workspace.windows.get_mut(&window_id) {
-                            window.pos = layout.tile_pos_in_workspace_view;
-                            window.size = layout.tile_size;
-                            window.is_floating = layout.pos_in_scrolling_layout.is_none();
-                            if let Some((col, win_idx)) = layout.pos_in_scrolling_layout {
-                                let (column_index, window_index) =
-                                    ipc::validate_and_convert_indices(col, win_idx, window_id);
-                                window.column_index = column_index;
-                                window.window_index = window_index;
-                            }
-                        }
-                    }
-                }
+                state.apply_layouts(&layouts);
             });
             minimap.show();
             tracing::debug!("Window layouts changed");
@@ -403,14 +319,13 @@ mod tests {
 
     #[test]
     fn test_drain_full_state_supersedes_earlier_updates() {
-        let (tx, rx) = mpsc::channel();
-        tx.send(window_changed(1, "stale")).unwrap();
-        tx.send(StateUpdate::WindowClosed(9)).unwrap();
-        tx.send(StateUpdate::FullState(state::MinimapState::new()))
+        let (tx, rx) = async_channel::unbounded();
+        tx.send_blocking(StateUpdate::WindowClosed(9)).unwrap();
+        tx.send_blocking(StateUpdate::FullState(state::MinimapState::new()))
             .unwrap();
-        tx.send(window_changed(2, "fresh")).unwrap();
+        tx.send_blocking(window_changed(2, "fresh")).unwrap();
 
-        let kept = drain_state_updates(&rx);
+        let kept = drain_state_updates(window_changed(1, "stale"), &rx);
 
         assert_eq!(kept.len(), 2);
         assert!(matches!(kept[0], StateUpdate::FullState(_)));
@@ -419,66 +334,75 @@ mod tests {
     }
 
     #[test]
-    fn test_config_reload_debounce_constant() {
-        assert_eq!(CONFIG_RELOAD_DEBOUNCE_MS, 500);
-    }
+    fn test_apply_state_updates_applies_first_at_once_then_batches() {
+        use std::time::Instant;
 
-    #[test]
-    fn test_debounce_logic_simulation() {
-        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
-        let mut last_reload = Instant::now();
-
-        std::thread::sleep(Duration::from_millis(100));
-        let now = Instant::now();
-
-        assert!(now.duration_since(last_reload) < debounce_duration);
-
-        std::thread::sleep(Duration::from_millis(450)); // total 550ms > 500ms
-        let now = Instant::now();
-        assert!(now.duration_since(last_reload) >= debounce_duration);
-
-        last_reload = now;
-        let now = Instant::now();
-        assert!(now.duration_since(last_reload) < debounce_duration);
-    }
-
-    #[test]
-    fn test_debounce_edge_case_exact_boundary() {
-        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
-        let last_reload = Instant::now();
-
-        std::thread::sleep(debounce_duration);
-        let now = Instant::now();
-
-        assert!(now.duration_since(last_reload) >= debounce_duration);
-    }
-
-    #[test]
-    fn test_debounce_multiple_rapid_events() {
-        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
-        let mut last_reload = Instant::now();
-        let mut reload_count = 0;
-
-        // 10 events over 200ms, all inside the debounce window
-        for _ in 0..10 {
-            std::thread::sleep(Duration::from_millis(20));
-            let now = Instant::now();
-
-            if now.duration_since(last_reload) >= debounce_duration {
-                reload_count += 1;
-                last_reload = now;
+        fn describe(update: &StateUpdate) -> String {
+            match update {
+                StateUpdate::WindowClosed(id) => format!("closed {id}"),
+                other => window_title(other).unwrap_or("?").to_string(),
             }
         }
 
-        assert_eq!(reload_count, 0);
+        let context = glib::MainContext::new();
+        context
+            .with_thread_default(|| {
+                let (tx, rx) = async_channel::unbounded();
+                let applied = Rc::new(RefCell::new(Vec::new()));
+                let applied_in_loop = applied.clone();
+                let handle = glib::spawn_future_local(apply_state_updates(rx, move |update| {
+                    applied_in_loop
+                        .borrow_mut()
+                        .push((describe(&update), Instant::now()));
+                }));
 
-        std::thread::sleep(Duration::from_millis(350)); // total 550ms > 500ms
-        let now = Instant::now();
+                let iterate_until = |count: usize| {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while applied.borrow().len() < count {
+                        assert!(Instant::now() < deadline, "timed out");
+                        context.iteration(true);
+                    }
+                };
 
-        if now.duration_since(last_reload) >= debounce_duration {
-            reload_count += 1;
-        }
+                tx.send_blocking(window_changed(1, "a")).unwrap();
+                iterate_until(1);
 
-        assert_eq!(reload_count, 1);
+                // A burst during the batch interval is applied as one coalesced batch.
+                tx.send_blocking(window_changed(1, "b")).unwrap();
+                tx.send_blocking(window_changed(1, "c")).unwrap();
+                tx.send_blocking(StateUpdate::WindowClosed(5)).unwrap();
+                iterate_until(3);
+
+                drop(tx);
+                context.block_on(handle).unwrap();
+
+                let applied = applied.borrow();
+                let names: Vec<&str> = applied.iter().map(|(name, _)| name.as_str()).collect();
+                assert_eq!(names, ["a", "c", "closed 5"]);
+                // Allow for timer granularity; glib timeouts never fire early.
+                assert!(applied[1].1 - applied[0].1 >= Duration::from_millis(40));
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_drain_with_empty_backlog_returns_first() {
+        let (_tx, rx) = async_channel::unbounded();
+
+        let kept = drain_state_updates(StateUpdate::WindowClosed(3), &rx);
+
+        assert_eq!(kept.len(), 1);
+        assert!(matches!(kept[0], StateUpdate::WindowClosed(3)));
+    }
+
+    #[test]
+    fn test_drain_coalesces_first_with_backlog() {
+        let (tx, rx) = async_channel::unbounded();
+        tx.send_blocking(window_changed(1, "newer")).unwrap();
+
+        let kept = drain_state_updates(window_changed(1, "older"), &rx);
+
+        assert_eq!(kept.len(), 1);
+        assert_eq!(window_title(&kept[0]), Some("newer"));
     }
 }

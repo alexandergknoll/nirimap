@@ -397,7 +397,7 @@ show_for_floating_windows = false # When always_visible = false, surface the min
                                   # windows aren't drawn on the minimap.
 "##;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
     pub r: f64,
     pub g: f64,
@@ -406,11 +406,17 @@ pub struct Color {
 }
 
 impl Color {
+    /// Opaque colour from components in 0.0 - 1.0.
+    pub const fn rgb(r: f64, g: f64, b: f64) -> Self {
+        Self { r, g, b, a: 1.0 }
+    }
+
     /// Parse `#rrggbb` (the `#` is optional).
     pub fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.trim_start_matches('#');
 
-        if hex.len() != 6 {
+        // Non-ASCII input can't be hex, and slicing it by byte could split a character.
+        if hex.len() != 6 || !hex.is_ascii() {
             return None;
         }
 
@@ -661,6 +667,13 @@ mod tests {
         assert!(Color::from_hex("#gggggg").is_none());
         assert!(Color::from_hex("#1e1e2z").is_none());
         assert!(Color::from_hex("xyz123").is_none());
+    }
+
+    #[test]
+    fn test_color_from_hex_non_ascii_rejected_without_panic() {
+        // Six bytes, but byte offset 2 falls inside 'é'.
+        assert!(Color::from_hex("#aébcd").is_none());
+        assert!(Color::from_hex("ab日c").is_none());
     }
 
     #[test]

@@ -1,4 +1,5 @@
 mod decorations;
+mod draw;
 mod layer;
 mod minimap;
 

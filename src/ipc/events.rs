@@ -91,7 +91,7 @@ fn fetch_initial_state() -> Result<MinimapState> {
 
     for win in windows {
         if let Some(workspace_id) = win.workspace_id {
-            let window = niri_window_to_model(&win);
+            let window = Window::from_niri(&win);
             state.upsert_window(workspace_id, window);
 
             if win.is_focused {
@@ -169,29 +169,11 @@ fn connect_event_stream() -> Result<BufReader<UnixStream>> {
     Ok(reader)
 }
 
-/// Convert Niri's 1-based (column, window) indices to 0-based, warning on 0.
-pub fn validate_and_convert_indices(col: usize, win_idx: usize, window_id: u64) -> (usize, usize) {
-    if col == 0 {
-        tracing::warn!(
-            "Invalid column index 0 received from Niri for window {}",
-            window_id
-        );
-    }
-    if win_idx == 0 {
-        tracing::warn!(
-            "Invalid window index 0 received from Niri for window {}",
-            window_id
-        );
-    }
-
-    (col.saturating_sub(1), win_idx.saturating_sub(1))
-}
-
 fn event_to_update(event: Event) -> Option<StateUpdate> {
     match event {
         Event::WindowOpenedOrChanged { window } => {
             let workspace_id = window.workspace_id;
-            let model_window = niri_window_to_model(&window);
+            let model_window = Window::from_niri(&window);
             Some(StateUpdate::WindowChanged {
                 window: model_window,
                 workspace_id,
@@ -212,30 +194,6 @@ fn event_to_update(event: Event) -> Option<StateUpdate> {
             active_window_id,
         }),
         _ => None,
-    }
-}
-
-fn niri_window_to_model(win: &niri_ipc::Window) -> Window {
-    let layout = &win.layout;
-
-    // Floating windows have no scrolling-layout position.
-    let is_floating = layout.pos_in_scrolling_layout.is_none();
-
-    let (column_index, window_index) = layout
-        .pos_in_scrolling_layout
-        .map(|(c, w)| validate_and_convert_indices(c, w, win.id))
-        .unwrap_or((0, 0));
-
-    Window {
-        id: win.id,
-        pos: layout.tile_pos_in_workspace_view,
-        size: layout.tile_size,
-        column_index,
-        window_index,
-        is_focused: win.is_focused,
-        is_floating,
-        title: win.title.clone(),
-        app_id: win.app_id.clone(),
     }
 }
 
@@ -292,45 +250,5 @@ mod tests {
         // Unexpected locations only warn.
         assert!(validate_socket_path("/home/user/niri.sock").is_ok());
         assert!(validate_socket_path("/var/niri.sock").is_ok());
-    }
-
-    #[test]
-    fn test_validate_and_convert_indices_normal_conversion() {
-        assert_eq!(validate_and_convert_indices(1, 1, 100), (0, 0));
-        assert_eq!(validate_and_convert_indices(2, 1, 100), (1, 0));
-        assert_eq!(validate_and_convert_indices(1, 2, 100), (0, 1));
-        assert_eq!(validate_and_convert_indices(5, 3, 100), (4, 2));
-    }
-
-    #[test]
-    fn test_validate_and_convert_indices_zero_handling() {
-        assert_eq!(validate_and_convert_indices(0, 1, 100), (0, 0));
-        assert_eq!(validate_and_convert_indices(1, 0, 100), (0, 0));
-        assert_eq!(validate_and_convert_indices(0, 0, 100), (0, 0));
-    }
-
-    #[test]
-    fn test_validate_and_convert_indices_max_value() {
-        assert_eq!(
-            validate_and_convert_indices(usize::MAX, 1, 100),
-            (usize::MAX - 1, 0)
-        );
-        assert_eq!(
-            validate_and_convert_indices(1, usize::MAX, 100),
-            (0, usize::MAX - 1)
-        );
-        assert_eq!(
-            validate_and_convert_indices(usize::MAX, usize::MAX, 100),
-            (usize::MAX - 1, usize::MAX - 1)
-        );
-    }
-
-    #[test]
-    fn test_validate_and_convert_indices_large_values() {
-        assert_eq!(validate_and_convert_indices(1000, 500, 100), (999, 499));
-        assert_eq!(
-            validate_and_convert_indices(999999, 123456, 100),
-            (999998, 123455)
-        );
     }
 }
