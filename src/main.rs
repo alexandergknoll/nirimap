@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod config_watcher;
 mod ipc;
 mod state;
 mod ui;
@@ -10,21 +11,17 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
 use gtk4::glib;
 use gtk4::prelude::*;
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use config::Config;
 use ipc::StateUpdate;
 use ui::{create_layer_window, MinimapWidget};
 
 const APP_ID: &str = "com.github.nirimap";
-
-/// Minimum interval between config reloads.
-const CONFIG_RELOAD_DEBOUNCE_MS: u64 = 500;
 
 enum ConfigMessage {
     Reload,
@@ -82,15 +79,14 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
 
     let config_path = Config::config_path();
     thread::spawn(move || {
-        if let Err(e) = watch_config_file(config_path, config_tx) {
+        let on_reload = move || config_tx.send(ConfigMessage::Reload).is_ok();
+        if let Err(e) = config_watcher::watch_config_file(config_path, on_reload) {
             tracing::error!("Config watcher error: {}", e);
         }
     });
 
     // Poll both channels from the GTK main loop.
     let minimap_clone = minimap.clone();
-    let last_config_reload = Rc::new(RefCell::new(Instant::now()));
-    let config_reload_debounce = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
 
     glib::timeout_add_local(Duration::from_millis(50), move || {
         for update in drain_state_updates(&rx) {
@@ -98,15 +94,7 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
         }
 
         while let Ok(ConfigMessage::Reload) = config_rx.try_recv() {
-            let now = Instant::now();
-            let mut last_reload = last_config_reload.borrow_mut();
-
-            if now.duration_since(*last_reload) >= config_reload_debounce {
-                minimap_clone.reload_config();
-                *last_reload = now;
-            } else {
-                tracing::debug!("Config reload debounced (too soon after last reload)");
-            }
+            minimap_clone.reload_config();
         }
 
         glib::ControlFlow::Continue
@@ -120,52 +108,6 @@ fn activate(app: &gtk4::Application, config: Rc<RefCell<Config>>) -> Result<()> 
     }
 
     tracing::info!("Nirimap window created and displayed");
-
-    Ok(())
-}
-
-fn watch_config_file(
-    config_path: std::path::PathBuf,
-    tx: mpsc::Sender<ConfigMessage>,
-) -> Result<()> {
-    let (watcher_tx, watcher_rx) = mpsc::channel::<Result<Event, notify::Error>>();
-
-    let mut watcher = RecommendedWatcher::new(
-        move |res| {
-            let _ = watcher_tx.send(res);
-        },
-        notify::Config::default(),
-    )?;
-
-    // Watch the parent directory so atomic replaces (rename) are caught.
-    if let Some(parent) = config_path.parent() {
-        watcher.watch(parent, RecursiveMode::NonRecursive)?;
-        tracing::info!("Watching config directory: {}", parent.display());
-    }
-
-    for event in watcher_rx {
-        match event {
-            Ok(event) => {
-                let is_config_event = event.paths.iter().any(|p| p == &config_path);
-
-                if is_config_event {
-                    use notify::EventKind;
-                    match event.kind {
-                        EventKind::Create(_) | EventKind::Modify(_) => {
-                            tracing::debug!("Config file changed, triggering reload");
-                            if tx.send(ConfigMessage::Reload).is_err() {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("File watcher error: {}", e);
-            }
-        }
-    }
 
     Ok(())
 }
@@ -376,69 +318,5 @@ mod tests {
         assert!(matches!(kept[0], StateUpdate::FullState(_)));
         assert_eq!(window_title(&kept[1]), Some("fresh"));
         assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_config_reload_debounce_constant() {
-        assert_eq!(CONFIG_RELOAD_DEBOUNCE_MS, 500);
-    }
-
-    #[test]
-    fn test_debounce_logic_simulation() {
-        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
-        let mut last_reload = Instant::now();
-
-        std::thread::sleep(Duration::from_millis(100));
-        let now = Instant::now();
-
-        assert!(now.duration_since(last_reload) < debounce_duration);
-
-        std::thread::sleep(Duration::from_millis(450)); // total 550ms > 500ms
-        let now = Instant::now();
-        assert!(now.duration_since(last_reload) >= debounce_duration);
-
-        last_reload = now;
-        let now = Instant::now();
-        assert!(now.duration_since(last_reload) < debounce_duration);
-    }
-
-    #[test]
-    fn test_debounce_edge_case_exact_boundary() {
-        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
-        let last_reload = Instant::now();
-
-        std::thread::sleep(debounce_duration);
-        let now = Instant::now();
-
-        assert!(now.duration_since(last_reload) >= debounce_duration);
-    }
-
-    #[test]
-    fn test_debounce_multiple_rapid_events() {
-        let debounce_duration = Duration::from_millis(CONFIG_RELOAD_DEBOUNCE_MS);
-        let mut last_reload = Instant::now();
-        let mut reload_count = 0;
-
-        // 10 events over 200ms, all inside the debounce window
-        for _ in 0..10 {
-            std::thread::sleep(Duration::from_millis(20));
-            let now = Instant::now();
-
-            if now.duration_since(last_reload) >= debounce_duration {
-                reload_count += 1;
-                last_reload = now;
-            }
-        }
-
-        assert_eq!(reload_count, 0);
-
-        std::thread::sleep(Duration::from_millis(350)); // total 550ms > 500ms
-        let now = Instant::now();
-
-        if now.duration_since(last_reload) >= debounce_duration {
-            reload_count += 1;
-        }
-
-        assert_eq!(reload_count, 1);
     }
 }
