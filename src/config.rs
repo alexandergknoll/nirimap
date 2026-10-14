@@ -397,7 +397,7 @@ show_for_floating_windows = false # When always_visible = false, surface the min
                                   # windows aren't drawn on the minimap.
 "##;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
     pub r: f64,
     pub g: f64,
@@ -406,6 +406,11 @@ pub struct Color {
 }
 
 impl Color {
+    /// Opaque colour from components in 0.0 - 1.0.
+    pub const fn rgb(r: f64, g: f64, b: f64) -> Self {
+        Self { r, g, b, a: 1.0 }
+    }
+
     /// Parse `#rrggbb` (the `#` is optional).
     pub fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.trim_start_matches('#');

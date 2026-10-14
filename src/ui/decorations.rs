@@ -10,7 +10,7 @@ use gtk4::prelude::*;
 use gtk4::IconTheme;
 
 use super::draw::DrawCtx;
-use crate::config::{Anchor, Color, FontStyle, FontWeight, IconSize, LabelConfig, LabelContent};
+use crate::config::{Anchor, FontStyle, FontWeight, IconSize, LabelContent};
 use crate::state::Window;
 
 /// Inset from the window edge for icons anchored at a corner/edge.
@@ -74,7 +74,7 @@ pub(super) fn draw_window_decorations(
         && w >= config.labels.min_window_size
         && h >= config.labels.min_window_size
     {
-        draw_window_label(ctx.cr, window, x, y, w, h, &config.labels);
+        draw_window_label(ctx, window, x, y, w, h);
     }
 }
 
@@ -100,15 +100,9 @@ fn label_text(content: LabelContent, window: &Window) -> Option<String> {
     }
 }
 
-fn draw_window_label(
-    cr: &Context,
-    window: &Window,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    labels: &LabelConfig,
-) {
+fn draw_window_label(ctx: &DrawCtx<'_>, window: &Window, x: f64, y: f64, w: f64, h: f64) {
+    let cr = ctx.cr;
+    let labels = &ctx.config.labels;
     let Some(text) = label_text(labels.content, window) else {
         return;
     };
@@ -149,17 +143,11 @@ fn draw_window_label(
     };
     let tx = x + labels.padding;
 
-    let hex = if window.is_focused {
-        &labels.focused_color
+    let color = if window.is_focused {
+        ctx.palette.label_focused
     } else {
-        &labels.color
+        ctx.palette.label
     };
-    let color = Color::from_hex(hex).unwrap_or(Color {
-        r: 0.8,
-        g: 0.84,
-        b: 0.96,
-        a: 1.0,
-    });
 
     cr.save().ok();
     cr.rectangle(x, y, w, h);

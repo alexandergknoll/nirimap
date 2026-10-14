@@ -8,8 +8,8 @@ use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, DrawingArea};
 
 use super::decorations::{draw_window_decorations, IconCache};
-use super::draw::DrawCtx;
-use crate::config::{Color, Config, DisplayConfig, WorkspaceMode};
+use super::draw::{DrawCtx, Palette};
+use crate::config::{Config, DisplayConfig, WorkspaceMode};
 use crate::state::{MinimapState, Window, Workspace};
 
 /// Outer padding around the minimap content, in minimap pixels.
@@ -26,6 +26,8 @@ pub struct MinimapWidget {
     last_shown_focus_id: Rc<Cell<Option<u64>>>,
     /// Resolved app icons; cleared on config reload
     icon_cache: Rc<RefCell<IconCache>>,
+    /// Colours parsed from `config`; rebuilt on config reload
+    palette: Rc<Cell<Palette>>,
 }
 
 impl MinimapWidget {
@@ -36,6 +38,7 @@ impl MinimapWidget {
         let state = Rc::new(RefCell::new(MinimapState::new()));
 
         let height = config.borrow().display.height as i32;
+        let palette = Palette::from_config(&config.borrow());
         drawing_area.set_content_height(height);
         drawing_area.set_content_width(height); // square until content sizes it
 
@@ -47,6 +50,7 @@ impl MinimapWidget {
             hide_timeout_id: Rc::new(Cell::new(None)),
             last_shown_focus_id: Rc::new(Cell::new(None)),
             icon_cache: Rc::new(RefCell::new(IconCache::new())),
+            palette: Rc::new(Cell::new(palette)),
         };
 
         widget.setup_draw_handler();
@@ -144,6 +148,7 @@ impl MinimapWidget {
     pub fn reload_config(&self) {
         match Config::load() {
             Ok(new_config) => {
+                self.palette.set(Palette::from_config(&new_config));
                 *self.config.borrow_mut() = new_config;
 
                 // So theme_override changes take effect.
@@ -224,6 +229,7 @@ impl MinimapWidget {
         let state = self.state.clone();
         let config = self.config.clone();
         let icon_cache = self.icon_cache.clone();
+        let palette = self.palette.clone();
 
         self.drawing_area
             .set_draw_func(move |area, cr, width, height| {
@@ -231,6 +237,7 @@ impl MinimapWidget {
                 let mut ctx = DrawCtx {
                     cr,
                     config: &config,
+                    palette: palette.get(),
                     icon_cache: &mut icon_cache.borrow_mut(),
                     widget_scale: area.scale_factor(),
                 };
@@ -554,7 +561,7 @@ fn draw_minimap(
 
     // Optional background (transparent by default).
     if appearance.background_opacity > 0.0 {
-        if let Some(bg_color) = Color::from_hex(&appearance.background) {
+        if let Some(bg_color) = ctx.palette.background {
             cr.set_source_rgba(
                 bg_color.r,
                 bg_color.g,
@@ -624,13 +631,7 @@ fn draw_all_workspaces(
         viewport_width,
     );
 
-    let active_border =
-        Color::from_hex(&appearance.active_workspace_border_color).unwrap_or(Color {
-            r: 0.54,
-            g: 0.71,
-            b: 0.98,
-            a: 1.0,
-        });
+    let active_border = ctx.palette.active_workspace_border;
 
     let row_width = (width - PADDING * 2.0).max(0.0);
     let mut y = PADDING;
@@ -687,24 +688,7 @@ fn draw_tiled_windows(
     let cr = ctx.cr;
     let appearance = &ctx.config.appearance;
 
-    let window_color = Color::from_hex(&appearance.window_color).unwrap_or(Color {
-        r: 0.27,
-        g: 0.28,
-        b: 0.35,
-        a: 1.0,
-    });
-    let focused_color = Color::from_hex(&appearance.focused_color).unwrap_or(Color {
-        r: 0.54,
-        g: 0.71,
-        b: 0.98,
-        a: 1.0,
-    });
-    let border_color = Color::from_hex(&appearance.border_color).unwrap_or(Color {
-        r: 0.42,
-        g: 0.44,
-        b: 0.53,
-        a: 1.0,
-    });
+    let palette = ctx.palette;
 
     let gap = appearance.gap;
     let half_gap = gap / 2.0;
@@ -727,9 +711,9 @@ fn draw_tiled_windows(
             y_pos += window.size.1;
 
             let (fill_color, fill_alpha) = if window.is_focused {
-                (&focused_color, appearance.focused_opacity)
+                (palette.focused, appearance.focused_opacity)
             } else {
-                (&window_color, appearance.window_opacity)
+                (palette.window, appearance.window_opacity)
             };
 
             if fill_alpha > 0.0 {
@@ -740,10 +724,10 @@ fn draw_tiled_windows(
 
             if appearance.border_width > 0.0 {
                 cr.set_source_rgba(
-                    border_color.r,
-                    border_color.g,
-                    border_color.b,
-                    border_color.a,
+                    palette.border.r,
+                    palette.border.g,
+                    palette.border.b,
+                    palette.border.a,
                 );
                 cr.set_line_width(appearance.border_width);
                 rounded_rectangle(cr, x, y, w, h, appearance.border_radius);
