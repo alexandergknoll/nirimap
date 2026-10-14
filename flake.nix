@@ -20,36 +20,9 @@
         default = nirimap;
       });
 
-      overlays.default = final: _prev: {
-        nirimap = final.callPackage ./nix/package.nix { };
-      };
-
-      # Home Manager is the right layer for nirimap: it is a per-user session
-      # program, not a system service.
-      homeModules = rec {
-        nirimap = import ./nix/home-manager.nix self;
-        default = nirimap;
-      };
-      # Deprecated alias, kept for configurations still using the old name.
-      homeManagerModules = self.homeModules;
-
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.nirimap ];
-          packages = with pkgs; [
-            cargo
-            rustc
-            clippy
-            rustfmt
-            rust-analyzer
-          ];
-        };
-      });
-
+      # Lets `nix flake check` (run in CI) build the package and its tests.
       checks = forAllSystems (pkgs: {
         inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) nirimap;
       });
-
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
     };
 }

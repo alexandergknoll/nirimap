@@ -1,0 +1,33 @@
+name: Update flake.lock
+
+# Dependabot does not update flake.lock, so this opens a PR bumping the pinned
+# nixpkgs. Keeping it current matters mostly for the Rust toolchain: a cargo
+# bump that needs a newer rustc than the pinned one breaks the Nix CI job.
+on:
+  schedule:
+    - cron: "23 6 1 * *" # 1st of each month, 06:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Update flake.lock
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # push the update branch
+      pull-requests: write # open the PR
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop # match the PR base, as Dependabot does
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - name: Update flake.lock
+        uses: DeterminateSystems/update-flake-lock@da03c0f078bc4b2c37ee4f7e072d34bf8f188bb3 # v29
+        with:
+          base: develop
