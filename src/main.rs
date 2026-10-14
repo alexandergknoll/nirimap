@@ -224,35 +224,11 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
             let window_id = window.id;
             let is_focused = window.is_focused;
             let is_floating = window.is_floating;
-            let mut is_new_window = false;
-            let mut is_on_active_workspace = false;
-
-            minimap.update_state(|state| {
-                if is_focused {
-                    state.set_focused_window(Some(window_id));
-                }
-
-                if let Some(ws_id) = workspace_id {
-                    is_on_active_workspace = state.active_workspace_id == Some(ws_id);
-
-                    // Handles moves between workspaces.
-                    for (&id, workspace) in state.workspaces.iter_mut() {
-                        if id != ws_id {
-                            workspace.windows.remove(&window_id);
-                        }
-                    }
-
-                    let workspace = state
-                        .workspaces
-                        .entry(ws_id)
-                        .or_insert_with(Default::default);
-                    is_new_window = !workspace.windows.contains_key(&window_id);
-                    workspace.windows.insert(window_id, window);
-                }
-            });
+            let change =
+                minimap.update_state(|state| state.apply_window_change(window, workspace_id));
 
             // Only new windows on the active workspace trigger a show.
-            if is_on_active_workspace && is_new_window {
+            if change.is_new && change.on_active_workspace {
                 minimap.show_for_new_window(is_floating);
                 tracing::debug!(
                     "New window {} opened (focused: {}, floating: {})",
@@ -302,9 +278,7 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
             active_window_id,
         } => {
             minimap.update_state(|state| {
-                if let Some(ws) = state.workspaces.get_mut(&workspace_id) {
-                    ws.active_window_id = active_window_id;
-                }
+                state.set_workspace_active_window(workspace_id, active_window_id);
             });
             tracing::debug!(
                 "Workspace {} active window -> {:?}",
@@ -315,13 +289,7 @@ fn apply_state_update(minimap: &MinimapWidget, update: StateUpdate) {
 
         StateUpdate::LayoutsChanged(layouts) => {
             minimap.update_state(|state| {
-                for (window_id, layout) in layouts {
-                    for workspace in state.workspaces.values_mut() {
-                        if let Some(window) = workspace.windows.get_mut(&window_id) {
-                            window.apply_layout(&layout);
-                        }
-                    }
-                }
+                state.apply_layouts(&layouts);
             });
             minimap.show();
             tracing::debug!("Window layouts changed");

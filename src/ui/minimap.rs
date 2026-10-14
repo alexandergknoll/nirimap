@@ -163,14 +163,12 @@ impl MinimapWidget {
         &self.drawing_area
     }
 
-    /// Mutate the state, then resize and redraw.
-    pub fn update_state<F>(&self, f: F)
-    where
-        F: FnOnce(&mut MinimapState),
-    {
-        f(&mut self.state.borrow_mut());
+    /// Mutate the state, then resize and redraw. Returns the closure's result.
+    pub fn update_state<R>(&self, f: impl FnOnce(&mut MinimapState) -> R) -> R {
+        let result = f(&mut self.state.borrow_mut());
         self.update_size();
         self.drawing_area.queue_draw();
+        result
     }
 
     /// Resize the widget and window to fit the current state.
