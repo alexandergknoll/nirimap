@@ -43,14 +43,26 @@ jobs:
         run: cargo build --release --verbose
 
   nix:
-    name: Nix flake
-    runs-on: ubuntu-24.04
+    name: Nix flake (${{ matrix.system }})
+    # `nix flake check` only builds for the runner's own system, so each
+    # system listed in flake.nix needs a native runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false # upstream Nix, as most NixOS users run
 
       # Builds the package and runs the test suite inside the Nix sandbox, so a
       # broken flake or a stale flake.lock fails here rather than for NixOS users.

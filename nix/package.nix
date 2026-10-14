@@ -11,8 +11,16 @@ rustPlatform.buildRustPackage {
   pname = "nirimap";
   version = (lib.importTOML ../Cargo.toml).package.version;
 
-  # Flakes only copy git-tracked files, so this excludes target/.
-  src = ../.;
+  # Only the inputs the build actually reads, so edits to the README or CI
+  # config do not invalidate the build.
+  src = lib.fileset.toSource {
+    root = ../.;
+    fileset = lib.fileset.unions [
+      ../Cargo.toml
+      ../Cargo.lock
+      ../src
+    ];
+  };
 
   cargoLock.lockFile = ../Cargo.lock;
 
