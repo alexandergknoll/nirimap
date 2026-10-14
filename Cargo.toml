@@ -15,6 +15,9 @@ gtk4 = "0.11"
 gtk4-layer-shell = "0.8"
 pangocairo = "0.22"
 
+# Cross-thread channels the GTK main loop can await
+async-channel = "2"
+
 # Configuration
 toml = "1"
 serde = { version = "1", features = ["derive"] }
