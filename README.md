@@ -172,6 +172,8 @@ show_for_floating_windows = false # Surface the minimap for floating-window even
                                   # spawn). Off by default — floating windows aren't
                                   # drawn on the minimap, so popup activity would
                                   # otherwise flash it on/off.
+fade_in_ms = 0                 # Fade-in duration when the minimap appears (0 = instant)
+fade_out_ms = 0                # Fade-out duration when it auto-hides (0 = instant)
 ```
 
 ### Workspace Display Modes
@@ -205,7 +207,7 @@ The configuration file is watched for changes. Most settings will apply immediat
 
 - Appearance settings (colors, borders, gaps, opacity)
 - Label and icon settings (including `theme_override`)
-- Behavior settings (visibility, timeout)
+- Behavior settings (visibility, timeout, fades)
 - Display settings (height, max width)
 
 **Note**: Changing `anchor` or margins requires restarting nirimap.
@@ -220,6 +222,8 @@ When `always_visible = false`, the minimap will show temporarily when:
 - Window layouts change (resize, move between columns)
 
 The minimap hides automatically after `hide_timeout_ms` milliseconds.
+
+Set `fade_in_ms` / `fade_out_ms` to fade it in and out instead of popping (for example 120 and 180). If it is shown again while fading out, it fades back in from its current opacity.
 
 By default, the minimap stays hidden for floating-window activity:
 

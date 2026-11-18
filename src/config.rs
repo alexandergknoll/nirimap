@@ -269,6 +269,10 @@ pub struct BehaviorConfig {
     /// Whether floating-window focus/spawn events show the minimap (when not
     /// `always_visible`). Floating windows aren't drawn, so this is off by default.
     pub show_for_floating_windows: bool,
+    /// Fade-in duration when the minimap appears (0 = appear instantly)
+    pub fade_in_ms: u32,
+    /// Fade-out duration when the minimap auto-hides (0 = vanish instantly)
+    pub fade_out_ms: u32,
 }
 
 impl Default for BehaviorConfig {
@@ -278,6 +282,8 @@ impl Default for BehaviorConfig {
             always_visible: true,
             hide_timeout_ms: 2000,
             show_for_floating_windows: false,
+            fade_in_ms: 0,
+            fade_out_ms: 0,
         }
     }
 }
@@ -404,6 +410,8 @@ show_for_floating_windows = false # When always_visible = false, surface the min
                                   # floating-window events (focus to/from a floating window,
                                   # floating window spawn). Off by default since floating
                                   # windows aren't drawn on the minimap.
+fade_in_ms = 0                 # Fade-in duration when the minimap appears (0 = instant)
+fade_out_ms = 0                # Fade-out duration when it auto-hides (0 = instant)
 "##;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -497,6 +505,8 @@ mod tests {
         assert!(config.behavior.always_visible);
         assert_eq!(config.behavior.hide_timeout_ms, 2000);
         assert!(!config.behavior.show_for_floating_windows);
+        assert_eq!(config.behavior.fade_in_ms, 0);
+        assert_eq!(config.behavior.fade_out_ms, 0);
     }
 
     #[test]
@@ -600,6 +610,8 @@ mod tests {
             config.behavior.always_visible,
             defaults.behavior.always_visible
         );
+        assert_eq!(config.behavior.fade_in_ms, defaults.behavior.fade_in_ms);
+        assert_eq!(config.behavior.fade_out_ms, defaults.behavior.fade_out_ms);
     }
 
     #[test]

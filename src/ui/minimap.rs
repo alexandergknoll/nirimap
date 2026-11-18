@@ -22,6 +22,8 @@ pub struct MinimapWidget {
     config: Rc<RefCell<Config>>,
     window: Rc<RefCell<Option<ApplicationWindow>>>,
     hide_timeout_id: Rc<Cell<Option<glib::SourceId>>>,
+    /// Running fade-in/out animation on the window
+    fade: Rc<Cell<Option<Fade>>>,
     /// Last window id that triggered a show on focus change
     last_shown_focus_id: Rc<Cell<Option<u64>>>,
     /// Resolved app icons; cleared on config reload
@@ -48,6 +50,7 @@ impl MinimapWidget {
             config,
             window: Rc::new(RefCell::new(None)),
             hide_timeout_id: Rc::new(Cell::new(None)),
+            fade: Rc::new(Cell::new(None)),
             last_shown_focus_id: Rc::new(Cell::new(None)),
             icon_cache: Rc::new(RefCell::new(IconCache::new())),
             palette: Rc::new(Cell::new(palette)),
@@ -65,11 +68,17 @@ impl MinimapWidget {
         *self.window.borrow_mut() = Some(window);
     }
 
-    /// Show, scheduling auto-hide unless `always_visible`.
+    /// Show (fading in over `fade_in_ms`), scheduling auto-hide unless
+    /// `always_visible`.
     pub fn show(&self) {
         if let Some(window) = self.window.borrow().as_ref() {
-            window.set_visible(true);
+            if !window.is_visible() {
+                window.set_opacity(0.0);
+                window.set_visible(true);
+            }
         }
+        let fade_in_ms = self.config.borrow().behavior.fade_in_ms;
+        fade_window(&self.window, &self.fade, 1.0, fade_in_ms, false);
 
         if !self.config.borrow().behavior.always_visible {
             self.schedule_hide();
@@ -111,8 +120,10 @@ impl MinimapWidget {
         self.show();
     }
 
+    /// Hide immediately, without fading.
     pub fn hide(&self) {
         self.cancel_hide_timeout();
+        cancel_fade(&self.fade);
 
         if let Some(window) = self.window.borrow().as_ref() {
             window.set_visible(false);
@@ -122,17 +133,19 @@ impl MinimapWidget {
     fn schedule_hide(&self) {
         self.cancel_hide_timeout();
 
-        let timeout_ms = self.config.borrow().behavior.hide_timeout_ms;
+        let (timeout_ms, fade_out_ms) = {
+            let behavior = &self.config.borrow().behavior;
+            (behavior.hide_timeout_ms, behavior.fade_out_ms)
+        };
         let window = self.window.clone();
         let timeout_id_cell = self.hide_timeout_id.clone();
+        let fade = self.fade.clone();
 
         let source_id = glib::timeout_add_local_once(
             std::time::Duration::from_millis(timeout_ms as u64),
             move || {
-                if let Some(win) = window.borrow().as_ref() {
-                    win.set_visible(false);
-                }
                 timeout_id_cell.set(None);
+                fade_window(&window, &fade, 0.0, fade_out_ms, true);
             },
         );
 
@@ -250,6 +263,86 @@ impl MinimapWidget {
                 );
             });
     }
+}
+
+/// A running opacity animation on the minimap window.
+struct Fade {
+    tick_id: gtk4::TickCallbackId,
+    target: f64,
+}
+
+/// Animate the window's opacity to `target` over `duration_ms` (ease-out),
+/// hiding the window at the end if `hide_when_done`. A fade already heading to
+/// `target` is left running (shows arrive in bursts); any other fade is
+/// replaced, starting from the current opacity, so a show during a fade-out
+/// reverses it smoothly. A zero duration applies the end state immediately.
+fn fade_window(
+    window: &Rc<RefCell<Option<ApplicationWindow>>>,
+    fade: &Rc<Cell<Option<Fade>>>,
+    target: f64,
+    duration_ms: u32,
+    hide_when_done: bool,
+) {
+    if let Some(running) = fade.take() {
+        if running.target == target {
+            fade.set(Some(running));
+            return;
+        }
+        running.tick_id.remove();
+    }
+    let Some(window) = window.borrow().clone() else {
+        return;
+    };
+
+    let from = window.opacity();
+    if duration_ms == 0 || from == target {
+        window.set_opacity(target);
+        if hide_when_done {
+            window.set_visible(false);
+        }
+        return;
+    }
+
+    let duration_ms = duration_ms as f64;
+    // Timed from the first frame, so a fade-in starts once the surface is mapped.
+    let started_us = Cell::new(None::<i64>);
+    let fade_cell = fade.clone();
+    let tick_id = window.add_tick_callback(move |window, clock| {
+        let now_us = clock.frame_time();
+        let start_us = started_us.get().unwrap_or(now_us);
+        started_us.set(Some(start_us));
+        let elapsed_ms = (now_us - start_us) as f64 / 1000.0;
+
+        window.set_opacity(fade_opacity(from, target, elapsed_ms, duration_ms));
+        if elapsed_ms < duration_ms {
+            return glib::ControlFlow::Continue;
+        }
+        if hide_when_done {
+            window.set_visible(false);
+        }
+        // Returning Break removes the callback; forget its id so it isn't removed again.
+        fade_cell.set(None);
+        glib::ControlFlow::Break
+    });
+    fade.set(Some(Fade { tick_id, target }));
+}
+
+fn cancel_fade(fade: &Cell<Option<Fade>>) {
+    if let Some(running) = fade.take() {
+        running.tick_id.remove();
+    }
+}
+
+/// Opacity `elapsed_ms` into a `duration_ms` fade from `from` to `to`, with
+/// an ease-out cubic curve (fast start, gentle landing).
+fn fade_opacity(from: f64, to: f64, elapsed_ms: f64, duration_ms: f64) -> f64 {
+    let t = if duration_ms > 0.0 {
+        (elapsed_ms / duration_ms).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let eased = 1.0 - (1.0 - t).powi(3);
+    from + (to - from) * eased
 }
 
 /// Monitor logical width, used as the workspace viewport width.
@@ -928,6 +1021,17 @@ mod tests {
 
     fn assert_close(a: f64, b: f64) {
         assert!((a - b).abs() < 1e-9, "{a} != {b}");
+    }
+
+    #[test]
+    fn test_fade_opacity() {
+        assert_close(fade_opacity(0.0, 1.0, 0.0, 100.0), 0.0);
+        assert_close(fade_opacity(0.0, 1.0, 50.0, 100.0), 0.875);
+        assert_close(fade_opacity(0.0, 1.0, 100.0, 100.0), 1.0);
+        assert_close(fade_opacity(0.0, 1.0, 250.0, 100.0), 1.0);
+        // Fading out from a partly faded-in state.
+        assert_close(fade_opacity(0.4, 0.0, 50.0, 100.0), 0.05);
+        assert_close(fade_opacity(1.0, 0.0, 0.0, 0.0), 0.0);
     }
 
     #[test]

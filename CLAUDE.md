@@ -52,6 +52,7 @@ src/
 - Tracks last focused window to prevent duplicate show events
 - Distinguishes between new windows and property updates
 - Auto-hide with configurable timeout when `always_visible = false`
+- Optional fade in/out (`fade_in_ms` / `fade_out_ms`) animates the window opacity from a GTK tick callback; `hide()` stays instant
 
 ## Common Tasks
 
