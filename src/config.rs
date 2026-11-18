@@ -44,8 +44,9 @@ pub struct DisplayConfig {
     pub margin_y: i32,
     pub workspace_mode: WorkspaceMode,
     /// Keep the focused workspace's viewport at a fixed spot in the widget
-    /// (horizontally centered) and move the window strip behind it, instead of
-    /// fitting the widget to the content.
+    /// (horizontally centered; in `all` mode the active row also stays put
+    /// vertically) and move the windows behind it, instead of fitting the
+    /// widget to the content.
     pub center_viewport: bool,
 }
 
@@ -354,7 +355,7 @@ workspace_mode = "all"    # Which workspaces to show:
                           #   "current" - show only the active workspace
 center_viewport = false   # Keep the viewport centered and scroll the windows behind it,
                           # so the focused window stays at a fixed spot (widget grows to
-                          # fit content on both sides, up to max_width_percent)
+                          # fit content on both sides, up to max_width/height_percent)
 
 [appearance]
 background = "#1e1e2e"    # Background color (hex)

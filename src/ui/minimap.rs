@@ -399,6 +399,8 @@ struct AllModeGeometry {
     scale: f64,
     /// Screen x of each row's viewport left edge.
     viewport_anchor_x: f64,
+    /// Empty row slots above the first row (non-zero only with `center_viewport`).
+    first_row_slot: f64,
 }
 
 fn compute_all_mode_geometry(
@@ -412,7 +414,19 @@ fn compute_all_mode_geometry(
     let row_height_cfg = display.height as f64;
     let min_widget_width = row_height_cfg;
 
-    let n = rows.len().max(1) as f64;
+    // With `center_viewport`, reserve `rows - 1` slots both above and below the
+    // active row so it sits at the same spot whichever workspace is active, and
+    // the widget height stays the same while switching.
+    let (n, first_row_slot) = if display.center_viewport {
+        let others = rows.len().saturating_sub(1);
+        let active = rows.iter().position(|l| l.workspace.is_active).unwrap_or(0);
+        (
+            (2 * others + 1) as f64,
+            (others - active.min(others)) as f64,
+        )
+    } else {
+        (rows.len().max(1) as f64, 0.0)
+    };
     let total_gap = (n - 1.0).max(0.0) * workspace_gap;
 
     let ideal_height = n * row_height_cfg + total_gap + PADDING * 2.0;
@@ -487,6 +501,7 @@ fn compute_all_mode_geometry(
         row_height,
         scale,
         viewport_anchor_x,
+        first_row_slot,
     }
 }
 
@@ -713,7 +728,7 @@ fn draw_all_workspaces(
     let active_border = ctx.palette.active_workspace_border;
 
     let row_width = (width - PADDING * 2.0).max(0.0);
-    let mut y = PADDING;
+    let mut y = PADDING + geom.first_row_slot * (geom.row_height + appearance.workspace_gap);
     for layout in &rows {
         // Active workspace border.
         if layout.workspace.is_active && appearance.active_workspace_border_width > 0.0 {
@@ -946,6 +961,27 @@ mod tests {
         let geom = all_mode(&[workspace(1, 1, true, 0)], &display(true), 150.0);
         assert_close(geom.widget_width, 150.0);
         assert_close(geom.viewport_anchor_x, 25.0);
+    }
+
+    #[test]
+    fn test_all_mode_fit_height_follows_rows() {
+        let ws = [workspace(1, 1, false, 0), workspace(2, 2, true, 0)];
+        let geom = all_mode(&ws, &display(false), 10_000.0);
+        assert_close(geom.widget_height, 2.0 * 100.0 + 4.0 + 2.0 * PADDING);
+        assert_close(geom.first_row_slot, 0.0);
+    }
+
+    #[test]
+    fn test_all_mode_centered_active_row_stays_put() {
+        // Three rows: five slots, the active row always in the middle one.
+        for active in 0..3 {
+            let ws: Vec<_> = (0..3)
+                .map(|i| workspace(i + 1, i as u8 + 1, i == active, 0))
+                .collect();
+            let geom = all_mode(&ws, &display(true), 10_000.0);
+            assert_close(geom.widget_height, 5.0 * 100.0 + 4.0 * 4.0 + 2.0 * PADDING);
+            assert_close(geom.first_row_slot + active as f64, 2.0);
+        }
     }
 
     #[test]

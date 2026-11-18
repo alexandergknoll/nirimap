@@ -189,6 +189,8 @@ By default the widget is sized to fit the windows, so as you scroll through a wo
 
 The widget is made wide enough to show the furthest content on either side of the viewport on *both* sides, capped at `max_width_percent`; content beyond the cap is clipped. This applies in both `all` and `current` modes.
 
+In `all` mode the active workspace row is held in place vertically too: the widget reserves room for every other workspace both above and below it (so with N workspaces it is 2N - 1 rows tall, still capped at `max_height_percent`), and the rows move past the active one as you switch workspaces.
+
 ### Window Labels and Icons
 
 Window rectangles can show the application's icon and/or a text label to make windows easier to tell apart at a glance. Icons are enabled by default; labels are opt-in via `labels.enabled = true`.
