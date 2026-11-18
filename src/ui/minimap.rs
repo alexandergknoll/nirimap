@@ -447,28 +447,38 @@ fn compute_all_mode_geometry(
         .fold(f64::NEG_INFINITY, f64::max);
     let has_content = combined_left.is_finite() && combined_right.is_finite();
 
-    let (scaled_content_width, ideal_anchor) = if has_content {
-        let w = (combined_right - combined_left) * scale;
-        // Leftmost content sits at x = PADDING.
-        let anchor = PADDING - combined_left * scale;
-        (w, anchor)
+    let viewport_scaled = viewport_width * scale;
+    let (widget_width, viewport_anchor_x) = if display.center_viewport {
+        let side = if has_content {
+            centered_side_extent(combined_left, combined_right, viewport_width) * scale
+        } else {
+            0.0
+        };
+        centered_width_and_anchor(viewport_scaled, side, min_widget_width, max_width)
     } else {
-        (0.0, PADDING)
-    };
+        let (scaled_content_width, ideal_anchor) = if has_content {
+            let w = (combined_right - combined_left) * scale;
+            // Leftmost content sits at x = PADDING.
+            let anchor = PADDING - combined_left * scale;
+            (w, anchor)
+        } else {
+            (0.0, PADDING)
+        };
 
-    let ideal_width = scaled_content_width + PADDING * 2.0;
-    let widget_width = ideal_width.min(max_width).max(min_widget_width);
+        let ideal_width = scaled_content_width + PADDING * 2.0;
+        let widget_width = ideal_width.min(max_width).max(min_widget_width);
 
-    // If content overflows the width cap, keeping the leftmost extent at PADDING
-    // could push every viewport off the widget (a workspace with lots of
-    // off-viewport content to its left has a large `align_x`). Center the
-    // viewport instead so it's always visible.
-    let inner_width = (widget_width - PADDING * 2.0).max(0.0);
-    let viewport_anchor_x = if !has_content || scaled_content_width <= inner_width {
-        ideal_anchor
-    } else {
-        let viewport_scaled = viewport_width * scale;
-        PADDING + (inner_width - viewport_scaled) / 2.0
+        // If content overflows the width cap, keeping the leftmost extent at PADDING
+        // could push every viewport off the widget (a workspace with lots of
+        // off-viewport content to its left has a large `align_x`). Center the
+        // viewport instead so it's always visible.
+        let inner_width = (widget_width - PADDING * 2.0).max(0.0);
+        let viewport_anchor_x = if !has_content || scaled_content_width <= inner_width {
+            ideal_anchor
+        } else {
+            PADDING + (inner_width - viewport_scaled) / 2.0
+        };
+        (widget_width, viewport_anchor_x)
     };
 
     AllModeGeometry {
@@ -478,6 +488,28 @@ fn compute_all_mode_geometry(
         scale,
         viewport_anchor_x,
     }
+}
+
+/// How far content reaches past the viewport on its wider side, in workspace
+/// units, given viewport-relative extents (`left` <= 0 means content left of
+/// the viewport). With `center_viewport`, both sides get this much room so all
+/// content fits around a centered viewport.
+fn centered_side_extent(left: f64, right: f64, viewport_width: f64) -> f64 {
+    (-left).max(right - viewport_width).max(0.0)
+}
+
+/// Widget width and viewport left edge (screen x) for `center_viewport`: the
+/// scaled viewport sits in the middle with `side` pixels of room on each side,
+/// width clamped to [`min_width`, `max_width`].
+fn centered_width_and_anchor(
+    viewport_scaled: f64,
+    side: f64,
+    min_width: f64,
+    max_width: f64,
+) -> (f64, f64) {
+    let ideal_width = viewport_scaled + side * 2.0 + PADDING * 2.0;
+    let width = ideal_width.min(max_width).max(min_width);
+    (width, (width - viewport_scaled) / 2.0)
 }
 
 /// Widget size for the current state.
@@ -496,18 +528,29 @@ fn compute_widget_dimensions(
         WorkspaceMode::Current => {
             let widget_height = row_height_cfg;
             let row_height = (widget_height - PADDING * 2.0).max(0.0);
-            let scaled_w = state
+            let layout = state
                 .active_workspace()
-                .map(|ws| {
-                    row_scaled_width_centered(
-                        &build_workspace_layout(ws, viewport_width),
-                        row_height,
-                    )
-                })
-                .unwrap_or(0.0);
+                .map(|ws| build_workspace_layout(ws, viewport_width));
 
-            let ideal_width = scaled_w + PADDING * 2.0;
-            let width = ideal_width.min(max_width).max(min_widget_width);
+            let width = if display.center_viewport {
+                let geom = layout.as_ref().and_then(|l| {
+                    current_mode_centered(
+                        l,
+                        row_height,
+                        viewport_width,
+                        min_widget_width,
+                        max_width,
+                    )
+                });
+                geom.map_or(min_widget_width, |(width, _, _)| width)
+            } else {
+                let scaled_w = layout
+                    .as_ref()
+                    .map(|l| row_scaled_width_centered(l, row_height))
+                    .unwrap_or(0.0);
+                let ideal_width = scaled_w + PADDING * 2.0;
+                ideal_width.min(max_width).max(min_widget_width)
+            };
 
             WidgetDimensions {
                 width,
@@ -540,6 +583,25 @@ fn row_scaled_width_centered(layout: &WorkspaceLayout<'_>, row_inner_height: f64
     }
     let scale = row_inner_height / layout.max_height;
     layout.total_width * scale
+}
+
+/// `current` mode with `center_viewport`: (widget width, screen x of
+/// workspace-x 0, scale), or `None` when there is nothing to draw.
+fn current_mode_centered(
+    layout: &WorkspaceLayout<'_>,
+    row_inner_height: f64,
+    viewport_width: f64,
+    min_width: f64,
+    max_width: f64,
+) -> Option<(f64, f64, f64)> {
+    if !layout.has_tiled || layout.max_height <= 0.0 || row_inner_height <= 0.0 {
+        return None;
+    }
+    let scale = row_inner_height / layout.max_height;
+    let side = centered_side_extent(layout.anchored_left, layout.anchored_right, viewport_width);
+    let (width, viewport_anchor_x) =
+        centered_width_and_anchor(viewport_width * scale, side * scale, min_width, max_width);
+    Some((width, viewport_anchor_x - layout.align_x * scale, scale))
 }
 
 fn draw_minimap(
@@ -580,7 +642,8 @@ fn draw_minimap(
 }
 
 /// `current` mode: the active workspace's tiled windows, scaled to the widget
-/// height and horizontally centered.
+/// height and horizontally centered (or, with `center_viewport`, positioned so
+/// the viewport is centered).
 fn draw_current_workspace(
     ctx: &mut DrawCtx<'_>,
     state: &MinimapState,
@@ -595,6 +658,22 @@ fn draw_current_workspace(
     let row_width = (width - PADDING * 2.0).max(0.0);
     let row_height = (height - PADDING * 2.0).max(0.0);
     if layout.total_width <= 0.0 || layout.max_height <= 0.0 || row_height <= 0.0 {
+        return;
+    }
+
+    if ctx.config.display.center_viewport {
+        // Pin the width to the actual widget width so the viewport lands in its middle.
+        let Some((_, x_origin, scale)) =
+            current_mode_centered(&layout, row_height, viewport_width, width, width)
+        else {
+            return;
+        };
+        let cr = ctx.cr;
+        cr.save().ok();
+        cr.rectangle(PADDING, PADDING, row_width, row_height);
+        cr.clip();
+        draw_tiled_windows(ctx, &layout, x_origin, PADDING, scale);
+        cr.restore().ok();
         return;
     }
 
@@ -773,4 +852,113 @@ fn rounded_rectangle(cr: &Context, x: f64, y: f64, width: f64, height: f64, radi
         3.0 * std::f64::consts::FRAC_PI_2,
     );
     cr.close_path();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    const VIEWPORT: f64 = 1000.0;
+
+    fn tile(id: u64, column_index: usize, pos: Option<(f64, f64)>) -> Window {
+        Window {
+            id,
+            pos,
+            size: (500.0, 1000.0),
+            column_index,
+            window_index: 0,
+            is_focused: false,
+            is_floating: false,
+            title: None,
+            app_id: None,
+        }
+    }
+
+    /// A workspace with three 500-wide columns (1500 total, viewport 1000),
+    /// scrolled so the viewport's left edge is at column `first_visible`.
+    fn workspace(id: u64, idx: u8, is_active: bool, first_visible: usize) -> Workspace {
+        let windows: HashMap<u64, Window> = (0..3)
+            .map(|col| {
+                let wid = id * 10 + col as u64;
+                let pos = is_active.then_some(((col as f64 - first_visible as f64) * 500.0, 0.0));
+                (wid, tile(wid, col, pos))
+            })
+            .collect();
+        Workspace {
+            id,
+            idx,
+            output: None,
+            windows,
+            is_active,
+            active_window_id: None,
+        }
+    }
+
+    fn display(center_viewport: bool) -> DisplayConfig {
+        DisplayConfig {
+            height: 100,
+            center_viewport,
+            ..Default::default()
+        }
+    }
+
+    fn all_mode(ws: &[Workspace], display: &DisplayConfig, max_width: f64) -> AllModeGeometry {
+        let rows: Vec<_> = ws
+            .iter()
+            .map(|w| build_workspace_layout(w, VIEWPORT))
+            .collect();
+        compute_all_mode_geometry(&rows, display, 4.0, max_width, 10_000.0, VIEWPORT)
+    }
+
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "{a} != {b}");
+    }
+
+    #[test]
+    fn test_all_mode_fit_tracks_content() {
+        // Scale 0.1: content is 150 px, the viewport 100 px.
+        let left = all_mode(&[workspace(1, 1, true, 0)], &display(false), 10_000.0);
+        assert_close(left.widget_width, 158.0);
+        assert_close(left.viewport_anchor_x, PADDING);
+
+        let right = all_mode(&[workspace(1, 1, true, 1)], &display(false), 10_000.0);
+        assert_close(right.widget_width, 158.0);
+        assert_close(right.viewport_anchor_x, PADDING + 50.0);
+    }
+
+    #[test]
+    fn test_all_mode_centered_viewport_stays_put() {
+        // 50 px of off-viewport content on one side, so 50 px of room on both.
+        for first_visible in [0, 1] {
+            let geom = all_mode(
+                &[workspace(1, 1, true, first_visible)],
+                &display(true),
+                10_000.0,
+            );
+            assert_close(geom.widget_width, 100.0 + 2.0 * 50.0 + 2.0 * PADDING);
+            assert_close(geom.viewport_anchor_x + 50.0, geom.widget_width / 2.0);
+        }
+    }
+
+    #[test]
+    fn test_all_mode_centered_respects_max_width() {
+        let geom = all_mode(&[workspace(1, 1, true, 0)], &display(true), 150.0);
+        assert_close(geom.widget_width, 150.0);
+        assert_close(geom.viewport_anchor_x, 25.0);
+    }
+
+    #[test]
+    fn test_current_mode_centered_viewport() {
+        for first_visible in [0, 1] {
+            let ws = workspace(1, 1, true, first_visible);
+            let layout = build_workspace_layout(&ws, VIEWPORT);
+            let (width, x_origin, scale) =
+                current_mode_centered(&layout, 100.0, VIEWPORT, 0.0, 10_000.0).unwrap();
+            assert_close(scale, 0.1);
+            assert_close(width, 100.0 + 2.0 * 50.0 + 2.0 * PADDING);
+            // Viewport left edge (workspace x = align_x) sits 50 px left of centre.
+            assert_close(x_origin + layout.align_x * scale, width / 2.0 - 50.0);
+        }
+    }
 }

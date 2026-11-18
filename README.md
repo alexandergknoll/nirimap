@@ -121,6 +121,8 @@ margin_x = 10               # Horizontal margin from edge
 margin_y = 10               # Vertical margin from edge
 workspace_mode = "all"      # "all"     - stack every workspace vertically (default)
                             # "current" - show only the active workspace
+center_viewport = false     # Keep the viewport centered and scroll the windows
+                            # behind it (see "Centered Viewport" below)
 
 [appearance]
 background = "#1e1e2e"    # Background color (hex)
@@ -180,6 +182,12 @@ Two display modes control what the minimap shows:
 - **`current`** — only the active workspace is rendered. The widget height equals `display.height` and the minimap content changes as you switch workspaces. This is the classic nirimap behavior.
 
 In `all` mode the total widget height grows with the number of workspaces, capped at `max_height_percent` of the monitor's height. When the cap is hit, per-workspace rows shrink proportionally to fit.
+
+### Centered Viewport
+
+By default the widget is sized to fit the windows, so as you scroll through a workspace the focused window moves around inside the minimap. With `center_viewport = true` the viewport (the part of the strip that is on screen) stays in the middle of the widget and the windows slide behind it, the way Niri's scrolling layout feels: whatever is on screen is always at the same spot in the minimap.
+
+The widget is made wide enough to show the furthest content on either side of the viewport on *both* sides, capped at `max_width_percent`; content beyond the cap is clipped. This applies in both `all` and `current` modes.
 
 ### Window Labels and Icons
 

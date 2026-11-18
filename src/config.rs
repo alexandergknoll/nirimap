@@ -43,6 +43,10 @@ pub struct DisplayConfig {
     /// Vertical margin from edge
     pub margin_y: i32,
     pub workspace_mode: WorkspaceMode,
+    /// Keep the focused workspace's viewport at a fixed spot in the widget
+    /// (horizontally centered) and move the window strip behind it, instead of
+    /// fitting the widget to the content.
+    pub center_viewport: bool,
 }
 
 impl Default for DisplayConfig {
@@ -55,6 +59,7 @@ impl Default for DisplayConfig {
             margin_x: 10,
             margin_y: 10,
             workspace_mode: WorkspaceMode::default(),
+            center_viewport: false,
         }
     }
 }
@@ -347,6 +352,9 @@ margin_y = 10             # Vertical margin from edge
 workspace_mode = "all"    # Which workspaces to show:
                           #   "all"     - stack every workspace vertically (Overview-style)
                           #   "current" - show only the active workspace
+center_viewport = false   # Keep the viewport centered and scroll the windows behind it,
+                          # so the focused window stays at a fixed spot (widget grows to
+                          # fit content on both sides, up to max_width_percent)
 
 [appearance]
 background = "#1e1e2e"    # Background color (hex)
@@ -448,6 +456,7 @@ mod tests {
         assert_eq!(config.display.margin_x, 10);
         assert_eq!(config.display.margin_y, 10);
         assert_eq!(config.display.workspace_mode, WorkspaceMode::All);
+        assert!(!config.display.center_viewport);
 
         assert_eq!(config.appearance.background, "#1e1e2e");
         assert_eq!(config.appearance.window_color, "#45475a");
@@ -570,6 +579,10 @@ mod tests {
         let defaults = Config::default();
 
         assert_eq!(config.display.height, defaults.display.height);
+        assert_eq!(
+            config.display.center_viewport,
+            defaults.display.center_viewport
+        );
         assert_eq!(config.appearance.background, defaults.appearance.background);
         assert_eq!(config.labels.enabled, defaults.labels.enabled);
         assert_eq!(config.labels.content, defaults.labels.content);
