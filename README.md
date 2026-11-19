@@ -121,6 +121,8 @@ margin_x = 10               # Horizontal margin from edge
 margin_y = 10               # Vertical margin from edge
 workspace_mode = "all"      # "all"     - stack every workspace vertically (default)
                             # "current" - show only the active workspace
+center_viewport = false     # Keep the viewport centered and scroll the windows
+                            # behind it (see "Centered Viewport" below)
 
 [appearance]
 background = "#1e1e2e"    # Background color (hex)
@@ -170,6 +172,8 @@ show_for_floating_windows = false # Surface the minimap for floating-window even
                                   # spawn). Off by default — floating windows aren't
                                   # drawn on the minimap, so popup activity would
                                   # otherwise flash it on/off.
+fade_in_ms = 0                 # Fade-in duration when the minimap appears (0 = instant)
+fade_out_ms = 0                # Fade-out duration when it auto-hides (0 = instant)
 ```
 
 ### Workspace Display Modes
@@ -180,6 +184,14 @@ Two display modes control what the minimap shows:
 - **`current`** — only the active workspace is rendered. The widget height equals `display.height` and the minimap content changes as you switch workspaces. This is the classic nirimap behavior.
 
 In `all` mode the total widget height grows with the number of workspaces, capped at `max_height_percent` of the monitor's height. When the cap is hit, per-workspace rows shrink proportionally to fit.
+
+### Centered Viewport
+
+By default the widget is sized to fit the windows, so as you scroll through a workspace the focused window moves around inside the minimap. With `center_viewport = true` the viewport (the part of the strip that is on screen) stays in the middle of the widget and the windows slide behind it, the way Niri's scrolling layout feels: whatever is on screen is always at the same spot in the minimap.
+
+The widget is made wide enough to show the furthest content on either side of the viewport on *both* sides, capped at `max_width_percent`; content beyond the cap is clipped. This applies in both `all` and `current` modes.
+
+In `all` mode the active workspace row is held in place vertically too: the widget reserves room for every other workspace both above and below it (so with N workspaces it is 2N - 1 rows tall, still capped at `max_height_percent`), and the rows move past the active one as you switch workspaces.
 
 ### Window Labels and Icons
 
@@ -195,7 +207,7 @@ The configuration file is watched for changes. Most settings will apply immediat
 
 - Appearance settings (colors, borders, gaps, opacity)
 - Label and icon settings (including `theme_override`)
-- Behavior settings (visibility, timeout)
+- Behavior settings (visibility, timeout, fades)
 - Display settings (height, max width)
 
 **Note**: Changing `anchor` or margins requires restarting nirimap.
@@ -210,6 +222,8 @@ When `always_visible = false`, the minimap will show temporarily when:
 - Window layouts change (resize, move between columns)
 
 The minimap hides automatically after `hide_timeout_ms` milliseconds.
+
+Set `fade_in_ms` / `fade_out_ms` to fade it in and out instead of popping (for example 120 and 180). If it is shown again while fading out, it fades back in from its current opacity.
 
 By default, the minimap stays hidden for floating-window activity:
 
