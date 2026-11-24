@@ -34,7 +34,7 @@ anyhow = "1"
 dirs = "7"
 
 # File watching for hot reload
-notify = "8"
+notify = "9"
 
 [profile.release]
 lto = true
